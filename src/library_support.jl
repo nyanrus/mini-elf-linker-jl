@@ -4,9 +4,9 @@
 """
     LibraryType
 
-Enum representing different C library implementations.
+Enum representing different library types.
 """
-@enum LibraryType GLIBC MUSL UNKNOWN
+@enum LibraryType GLIBC MUSL STATIC SHARED UNKNOWN
 
 """
     LibraryInfo
@@ -16,8 +16,71 @@ Information about a detected library.
 struct LibraryInfo
     type::LibraryType
     path::String
+    name::String      # Library name (e.g., "c" for libc, "math" for libmath)
     version::String
     symbols::Set{String}  # Available symbols in this library
+end
+
+"""
+    detect_library_type(library_path::String) -> LibraryType
+
+Detect the type of library at the given path using magic bytes.
+"""
+function detect_library_type(library_path::String)
+    if !isfile(library_path)
+        return UNKNOWN
+    end
+    
+    file_type = detect_file_type_by_magic(library_path)
+    
+    if file_type == AR_FILE
+        return STATIC
+    elseif file_type == ELF_FILE
+        # For ELF files, determine if it's glibc/musl or regular shared library
+        elf_header = parse_native_elf_header(library_path)
+        if elf_header !== nothing
+            if elf_header.type == ET_DYN  # Shared object
+                # Check if it's libc specifically
+                filename = basename(library_path)
+                if occursin(r"libc\.so", filename)
+                    return detect_libc_type(library_path)
+                else
+                    return SHARED
+                end
+            elseif elf_header.type == ET_REL  # Relocatable object
+                return SHARED  # Treat relocatable objects as shared for now
+            end
+        end
+        return SHARED
+    elseif file_type == LINKER_SCRIPT
+        # Parse linker script to find actual library
+        return parse_linker_script_type(library_path)
+    end
+    
+    return UNKNOWN
+end
+
+"""
+    parse_linker_script_type(library_path::String) -> LibraryType
+
+Parse a linker script to determine the type of the actual library it references.
+"""
+function parse_linker_script_type(library_path::String)
+    try
+        content = read(library_path, String)
+        # Find referenced files in the linker script
+        for line in split(content, '\n')
+            for m in eachmatch(r"/[^\s)]+\.(?:so\.?[0-9]*|a)", line)
+                if isfile(m.match)
+                    # Recursively check the referenced file
+                    return detect_library_type(m.match)
+                end
+            end
+        end
+    catch e
+        println("Warning: Failed to parse linker script $library_path: $e")
+    end
+    return UNKNOWN
 end
 
 """
@@ -124,7 +187,7 @@ function find_system_libraries()
                         symbols = extract_library_symbols(full_path)
                         version = extract_library_version(full_path)
                         
-                        lib_info = LibraryInfo(lib_type, full_path, version, symbols)
+                        lib_info = LibraryInfo(lib_type, full_path, "c", version, symbols)
                         push!(libraries, lib_info)
                         println("Detected $(lib_type) library at: $full_path")
                     end
@@ -137,24 +200,289 @@ function find_system_libraries()
 end
 
 """
+    get_default_library_search_paths() -> Vector{String}
+
+Get the default library search paths similar to lld/ld.
+"""
+function get_default_library_search_paths()
+    return [
+        "/usr/local/lib/x86_64-linux-gnu",
+        "/lib/x86_64-linux-gnu",
+        "/usr/lib/x86_64-linux-gnu", 
+        "/usr/lib/x86_64-linux-gnu64",
+        "/usr/local/lib64",
+        "/lib64",
+        "/usr/lib64",
+        "/usr/local/lib",
+        "/lib",
+        "/usr/lib",
+        "/usr/x86_64-linux-gnu/lib64",
+        "/usr/x86_64-linux-gnu/lib"
+    ]
+end
+
+"""
+    extract_library_name_from_path(library_path::String) -> String
+
+Extract the library name from a library path (e.g., "c" from "/usr/lib/libc.so.6").
+"""
+function extract_library_name_from_path(library_path::String)
+    filename = basename(library_path)
+    
+    # Remove lib prefix and extensions
+    name = filename
+    if startswith(name, "lib")
+        name = name[4:end]  # Remove "lib" prefix
+    end
+    
+    # Remove .so, .so.version, .a extensions
+    name = replace(name, r"\.so(\.\d+)*$" => "")
+    name = replace(name, r"\.a$" => "")
+    
+    return name
+end
+
+"""
+    find_libraries_in_paths(search_paths::Vector{String}; library_names::Vector{String} = String[]) -> Vector{LibraryInfo}
+
+Find libraries in the specified search paths. If library_names is provided, only search for those specific libraries.
+If library_names is empty, finds all libraries in the search paths.
+"""
+function find_libraries_in_paths(search_paths::Vector{String}; library_names::Vector{String} = String[])
+    libraries = LibraryInfo[]
+    
+    for search_path in search_paths
+        if !isdir(search_path)
+            continue
+        end
+        
+        try
+            for file in readdir(search_path)
+                full_path = joinpath(search_path, file)
+                
+                if !isfile(full_path)
+                    continue
+                end
+                
+                # Check if it matches library patterns
+                if !matches_library_pattern(file)
+                    continue
+                end
+                
+                # If specific library names are requested, check if this matches
+                if !isempty(library_names)
+                    lib_name = extract_library_name_from_path(full_path)
+                    if !(lib_name in library_names)
+                        continue
+                    end
+                end
+                
+                # Detect library type
+                lib_type = detect_library_type(full_path)
+                if lib_type == UNKNOWN
+                    continue
+                end
+                
+                # Extract library information
+                lib_name = extract_library_name_from_path(full_path)
+                version = extract_library_version(full_path)
+                symbols = extract_library_symbols(full_path)
+                
+                lib_info = LibraryInfo(lib_type, full_path, lib_name, version, symbols)
+                push!(libraries, lib_info)
+            end
+        catch e
+            println("Warning: Failed to read directory $search_path: $e")
+        end
+    end
+    
+    return libraries
+end
+
+"""
+    matches_library_pattern(filename::String) -> Bool
+
+Check if a filename matches library naming patterns.
+"""
+function matches_library_pattern(filename::String)
+    # Static libraries (.a files)
+    if endswith(filename, ".a")
+        return startswith(filename, "lib")
+    end
+    
+    # Shared libraries (.so files)
+    if occursin(r"\.so(\.\d+)*$", filename)
+        return startswith(filename, "lib")
+    end
+    
+    return false
+end
+
+"""
+    find_crt_objects() -> Dict{String, String}
+
+Find C runtime objects (crt1.o, crti.o, crtn.o) required for program startup.
+"""
+function find_crt_objects()
+    crt_objects = Dict{String, String}()
+    
+    # Common CRT object search paths
+    search_paths = [
+        "/usr/lib/x86_64-linux-gnu",
+        "/usr/lib64", 
+        "/lib64",
+        "/usr/lib",
+        "/lib"
+    ]
+    
+    # CRT objects we need to find
+    crt_names = ["crt1.o", "crti.o", "crtn.o"]
+    
+    for search_path in search_paths
+        if !isdir(search_path)
+            continue
+        end
+        
+        for crt_name in crt_names
+            if haskey(crt_objects, crt_name)
+                continue  # Already found
+            end
+            
+            crt_path = joinpath(search_path, crt_name)
+            if isfile(crt_path)
+                crt_objects[crt_name] = crt_path
+            end
+        end
+    end
+    
+    return crt_objects
+end
+
+"""
+    find_default_libc() -> Union{LibraryInfo, Nothing}
+
+Find the default libc that should be automatically linked (like lld does).
+Only libc is linked automatically, other libraries must be explicitly requested.
+"""
+function find_default_libc()
+    # Search for libc.so in standard locations
+    search_paths = get_default_library_search_paths()
+    
+    for search_path in search_paths
+        if !isdir(search_path)
+            continue
+        end
+        
+        # Look for libc.so.6 or libc.so
+        for libc_name in ["libc.so.6", "libc.so"]
+            libc_path = joinpath(search_path, libc_name)
+            if isfile(libc_path)
+                lib_type = detect_libc_type(libc_path)
+                if lib_type != UNKNOWN
+                    version = extract_library_version(libc_path)
+                    symbols = extract_library_symbols(libc_path)
+                    return LibraryInfo(lib_type, libc_path, "c", version, symbols)
+                end
+            end
+        end
+    end
+    
+    return nothing
+end
+
+"""
+    find_libraries(search_paths::Vector{String} = String[]; library_names::Vector{String} = String[]) -> Vector{LibraryInfo}
+
+Find specific libraries using lld-style search. 
+- search_paths: Additional search paths (equivalent to -L option)
+- library_names: Specific library names to search for (equivalent to -l option)
+
+Unlike the old behavior, this only finds libraries explicitly requested via library_names.
+For automatic libc linking, use find_default_libc().
+"""
+function find_libraries(search_paths::Vector{String} = String[]; library_names::Vector{String} = String[])
+    # Return empty if no specific libraries requested (lld-compatible behavior)
+    if isempty(library_names)
+        return LibraryInfo[]
+    end
+    
+    # Combine custom search paths with default ones
+    all_search_paths = String[]
+    
+    # Add custom search paths first (higher priority)
+    append!(all_search_paths, search_paths)
+    
+    # Add default system search paths
+    append!(all_search_paths, get_default_library_search_paths())
+    
+    # Remove duplicates while preserving order
+    unique_paths = String[]
+    seen = Set{String}()
+    for path in all_search_paths
+        if !(path in seen)
+            push!(unique_paths, path)
+            push!(seen, path)
+        end
+    end
+    
+    return find_libraries_in_paths(unique_paths; library_names=library_names)
+end
+
+"""
     extract_library_symbols(library_path::String) -> Set{String}
 
-Extract available symbols from a library (simplified implementation).
+Extract available symbols from a library using native binary parsing.
 """
 function extract_library_symbols(library_path::String)
-    # For now, return a basic set of common libc symbols
-    # In a full implementation, this would parse the library's symbol table
-    common_symbols = Set{String}([
-        "printf", "sprintf", "fprintf", "snprintf",
-        "malloc", "free", "calloc", "realloc",
-        "strlen", "strcpy", "strcmp", "strcat",
-        "memcpy", "memset", "memcmp", "memmove",
-        "exit", "_exit", "abort",
-        "open", "close", "read", "write",
-        "getpid", "getuid", "getgid"
-    ])
+    symbols = Set{String}()
     
-    return common_symbols
+    if !isfile(library_path)
+        return symbols
+    end
+    
+    file_type = detect_file_type_by_magic(library_path)
+    
+    if file_type == ELF_FILE
+        # Native ELF parsing
+        symbols = extract_elf_symbols_native(library_path)
+    elseif file_type == AR_FILE
+        # Native archive parsing
+        symbols = extract_archive_symbols_native(library_path)
+    elseif file_type == LINKER_SCRIPT
+        # Parse linker script and extract symbols from referenced files
+        symbols = extract_linker_script_symbols(library_path)
+    else
+        println("Warning: Unknown file type for $library_path")
+    end
+    
+    return symbols
+end
+
+"""
+    extract_linker_script_symbols(library_path::String) -> Set{String}
+
+Extract symbols from libraries referenced in a linker script.
+"""
+function extract_linker_script_symbols(library_path::String)
+    symbols = Set{String}()
+    
+    try
+        content = read(library_path, String)
+        # Find referenced files in the linker script
+        for line in split(content, '\n')
+            for m in eachmatch(r"/[^\s)]+\.(?:so\.?[0-9]*|a)", line)
+                if isfile(m.match)
+                    # Recursively extract symbols from referenced file
+                    referenced_symbols = extract_library_symbols(m.match)
+                    union!(symbols, referenced_symbols)
+                end
+            end
+        end
+    catch e
+        println("Warning: Failed to parse linker script $library_path: $e")
+    end
+    
+    return symbols
 end
 
 """
