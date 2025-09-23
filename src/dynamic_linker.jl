@@ -398,11 +398,14 @@ function apply_relocation_to_region!(region::MemoryRegion, offset::UInt64, value
 end
 
 """
-    link_objects(filenames::Vector{String}; base_address::UInt64 = 0x400000) -> DynamicLinker
+    link_objects(filenames::Vector{String}; base_address::UInt64 = 0x400000, 
+                enable_system_libraries::Bool = true) -> DynamicLinker
 
-Link multiple ELF object files together.
+Link multiple ELF object files together. If enable_system_libraries is true,
+will attempt to resolve symbols against system libraries (glibc, musl).
 """
-function link_objects(filenames::Vector{String}; base_address::UInt64 = UInt64(0x400000))
+function link_objects(filenames::Vector{String}; base_address::UInt64 = UInt64(0x400000),
+                     enable_system_libraries::Bool = true)
     linker = DynamicLinker(base_address)
     
     # Load all objects
@@ -414,6 +417,25 @@ function link_objects(filenames::Vector{String}; base_address::UInt64 = UInt64(0
     
     # Resolve symbols
     unresolved = resolve_symbols(linker)
+    
+    # Attempt to resolve against system libraries if enabled
+    if enable_system_libraries && !isempty(unresolved)
+        println("Detecting system libraries...")
+        system_libraries = find_system_libraries()
+        
+        if !isempty(system_libraries)
+            println("Found $(length(system_libraries)) system libraries:")
+            for lib in system_libraries
+                println("  - $(lib.type): $(lib.path) (version $(lib.version))")
+            end
+            
+            remaining_unresolved = resolve_unresolved_symbols!(linker, system_libraries)
+            unresolved = remaining_unresolved
+        else
+            println("No system libraries detected")
+        end
+    end
+    
     if !isempty(unresolved)
         println("Warning: Unresolved symbols:")
         for sym in unresolved
@@ -433,15 +455,20 @@ end
 
 """
     link_to_executable(filenames::Vector{String}, output_filename::String; 
-                      base_address::UInt64 = 0x400000, entry_symbol::String = "main") -> Bool
+                      base_address::UInt64 = 0x400000, entry_symbol::String = "main",
+                      enable_system_libraries::Bool = true) -> Bool
 
 Link multiple ELF object files together and output an executable ELF file.
+If enable_system_libraries is true, will attempt to resolve symbols against
+system libraries (glibc, musl).
 """
 function link_to_executable(filenames::Vector{String}, output_filename::String; 
                            base_address::UInt64 = UInt64(0x400000), 
-                           entry_symbol::String = "main")
+                           entry_symbol::String = "main",
+                           enable_system_libraries::Bool = true)
     # Perform normal linking
-    linker = link_objects(filenames; base_address=base_address)
+    linker = link_objects(filenames; base_address=base_address, 
+                         enable_system_libraries=enable_system_libraries)
     
     # Find entry point
     entry_point = base_address + 0x1000  # Default entry point
