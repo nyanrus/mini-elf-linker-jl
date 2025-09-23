@@ -306,8 +306,14 @@ function perform_relocation!(linker::DynamicLinker, elf_file::ElfFile, relocatio
         symbol_value = 0
         symbol_name = ""
     elseif sym_index <= length(elf_file.symbols)
-        symbol = elf_file.symbols[sym_index]
-        symbol_name = get_string_from_table(elf_file.symbol_string_table, symbol.name)
+        # Convert from 0-based ELF indexing to 1-based Julia indexing
+        julia_index = sym_index + 1
+        if julia_index <= length(elf_file.symbols)
+            symbol = elf_file.symbols[julia_index]
+            symbol_name = get_string_from_table(elf_file.symbol_string_table, symbol.name)
+        else
+            error("Invalid symbol index after conversion: $sym_index -> $julia_index")
+        end
         
         if !isempty(symbol_name) && haskey(linker.global_symbol_table, symbol_name)
             global_symbol = linker.global_symbol_table[symbol_name]
