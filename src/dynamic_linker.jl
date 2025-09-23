@@ -119,8 +119,12 @@ function extract_symbols!(linker::DynamicLinker, elf_file::ElfFile)
             if haskey(linker.global_symbol_table, symbol_name)
                 existing = linker.global_symbol_table[symbol_name]
                 
+                # Defined symbols override undefined symbols
+                if defined && !existing.defined
+                    linker.global_symbol_table[symbol_name] = symbol
+                    println("Symbol '$symbol_name': defined symbol overrides undefined")
                 # Global symbols override weak symbols
-                if binding == STB_GLOBAL && existing.binding == STB_WEAK
+                elseif binding == STB_GLOBAL && existing.binding == STB_WEAK
                     linker.global_symbol_table[symbol_name] = symbol
                     println("Symbol '$symbol_name': global definition overrides weak")
                 elseif binding == STB_WEAK && existing.binding == STB_GLOBAL
@@ -324,19 +328,72 @@ function perform_relocation!(linker::DynamicLinker, elf_file::ElfFile, relocatio
         error("Invalid symbol index: $sym_index")
     end
     
+    # For this simplified implementation, assume most relocations are in .text section
+    # Find the .text section's memory region
+    text_region = nothing
+    for region in linker.memory_regions
+        # Check if this region likely corresponds to .text (first executable region)
+        if region.permissions & 0x4 != 0  # Executable
+            text_region = region
+            break
+        end
+    end
+    
+    if text_region === nothing
+        println("Warning: Could not find text region for relocation")
+        return
+    end
+    
     # Perform relocation based on type
     if rel_type == R_X86_64_64
         # Direct 64-bit address
-        value = symbol_value + relocation.addend
+        value = Int64(symbol_value) + relocation.addend
+        apply_relocation_to_region!(text_region, relocation.offset, value, 8)
         println("R_X86_64_64 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")
     elseif rel_type == R_X86_64_PC32
         # PC-relative 32-bit
-        # Note: This is simplified - in reality we'd need to patch memory
-        target_addr = relocation.offset  # This would be the actual location in memory
-        value = symbol_value + relocation.addend - target_addr
+        target_addr = text_region.base_address + relocation.offset
+        value = Int64(symbol_value) + relocation.addend - Int64(target_addr)
+        apply_relocation_to_region!(text_region, relocation.offset, value, 4)
         println("R_X86_64_PC32 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")
+    elseif rel_type == R_X86_64_PLT32
+        # PLT 32-bit address (for static linking, treat like PC32)
+        target_addr = text_region.base_address + relocation.offset
+        value = Int64(symbol_value) + relocation.addend - Int64(target_addr)
+        apply_relocation_to_region!(text_region, relocation.offset, value, 4)
+        println("R_X86_64_PLT32 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")
     else
         println("Unsupported relocation type: $rel_type")
+    end
+end
+
+"""
+    apply_relocation_to_region!(region::MemoryRegion, offset::UInt64, value::Int64, size::Int)
+
+Apply a relocation to a memory region by patching the binary data.
+"""
+function apply_relocation_to_region!(region::MemoryRegion, offset::UInt64, value::Int64, size::Int)
+    # offset is relative to the start of the region
+    pos = Int(offset) + 1  # Julia arrays are 1-indexed
+    
+    if pos + size - 1 <= length(region.data)
+        # Apply the relocation based on size
+        if size == 4
+            # 32-bit relocation
+            val_32 = Int32(value)
+            region.data[pos] = UInt8(val_32 & 0xff)
+            region.data[pos+1] = UInt8((val_32 >> 8) & 0xff)
+            region.data[pos+2] = UInt8((val_32 >> 16) & 0xff)
+            region.data[pos+3] = UInt8((val_32 >> 24) & 0xff)
+        elseif size == 8
+            # 64-bit relocation
+            val_64 = UInt64(value)
+            for i in 0:7
+                region.data[pos+i] = UInt8((val_64 >> (i * 8)) & 0xff)
+            end
+        end
+    else
+        println("Warning: Relocation offset 0x$(string(offset, base=16)) exceeds region size")
     end
 end
 
