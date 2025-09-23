@@ -8,7 +8,7 @@ const NATIVE_ELF_MAGIC = UInt8[0x7f, 0x45, 0x4c, 0x46]  # "\x7fELF"
 const NATIVE_AR_MAGIC = b"!<arch>\n"  # Archive magic
 
 const NATIVE_ELF_CLASS_32 = 0x01
-const NATIVE_NATIVE_ELF_CLASS_64 = 0x02
+const NATIVE_ELF_CLASS_64 = 0x02
 const NATIVE_ELF_DATA_LSB = 0x01  # Little endian
 const NATIVE_ELF_DATA_MSB = 0x02  # Big endian
 
@@ -236,7 +236,7 @@ function extract_elf_symbols_native(file_path::String)
     
     try
         open(file_path, "r") do file
-            little_endian = (header.data == ELF_DATA_LSB)
+            little_endian = (header.data == NATIVE_ELF_DATA_LSB)
             is_64bit = (header.class == NATIVE_ELF_CLASS_64)
             
             # Read section headers
@@ -283,7 +283,7 @@ function extract_elf_symbols_native(file_path::String)
             
             # Find symbol tables and string tables
             for (i, section) in enumerate(section_headers)
-                if section.type == SHT_SYMTAB || section.type == SHT_DYNSYM
+                if section.type == NATIVE_SHT_SYMTAB || section.type == NATIVE_SHT_DYNSYM
                     # Found symbol table, get corresponding string table
                     if section.link > 0 && section.link <= length(section_headers)
                         strtab_section = section_headers[section.link]
@@ -351,7 +351,7 @@ function parse_symbol_table(file, symtab_section, strtab_section, little_endian,
                     binding = info >> 4
                     symbol_type = info & 0xf
                     
-                    if (binding == STB_GLOBAL || binding == STB_WEAK) && 
+                    if (binding == NATIVE_STB_GLOBAL || binding == NATIVE_STB_WEAK) && 
                        shndx != 0 && !isempty(symbol_name) && !startswith(symbol_name, "_")
                         push!(symbols, symbol_name)
                     end
@@ -411,7 +411,7 @@ function extract_archive_symbols_native(file_path::String)
                     magic = read(file, 4)
                     seek(file, member_start)  # Reset position
                     
-                    if magic == ELF_MAGIC
+                    if magic == NATIVE_ELF_MAGIC
                         # Create temporary file for the ELF object
                         temp_file = tempname() * ".o"
                         try
