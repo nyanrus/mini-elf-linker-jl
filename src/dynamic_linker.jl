@@ -399,13 +399,19 @@ end
 
 """
     link_objects(filenames::Vector{String}; base_address::UInt64 = 0x400000, 
-                enable_system_libraries::Bool = true) -> DynamicLinker
+                enable_system_libraries::Bool = true,
+                library_search_paths::Vector{String} = String[],
+                library_names::Vector{String} = String[]) -> DynamicLinker
 
-Link multiple ELF object files together. If enable_system_libraries is true,
-will attempt to resolve symbols against system libraries (glibc, musl).
+Link multiple ELF object files together. 
+- enable_system_libraries: Attempt to resolve symbols against system libraries
+- library_search_paths: Additional library search paths (equivalent to -L option)
+- library_names: Specific library names to link against (equivalent to -l option)
 """
 function link_objects(filenames::Vector{String}; base_address::UInt64 = UInt64(0x400000),
-                     enable_system_libraries::Bool = true)
+                     enable_system_libraries::Bool = true,
+                     library_search_paths::Vector{String} = String[],
+                     library_names::Vector{String} = String[])
     linker = DynamicLinker(base_address)
     
     # Load all objects
@@ -418,21 +424,23 @@ function link_objects(filenames::Vector{String}; base_address::UInt64 = UInt64(0
     # Resolve symbols
     unresolved = resolve_symbols(linker)
     
-    # Attempt to resolve against system libraries if enabled
+    # Attempt to resolve against libraries if enabled
     if enable_system_libraries && !isempty(unresolved)
-        println("Detecting system libraries...")
-        system_libraries = find_system_libraries()
+        println("Searching for libraries...")
         
-        if !isempty(system_libraries)
-            println("Found $(length(system_libraries)) system libraries:")
-            for lib in system_libraries
-                println("  - $(lib.type): $(lib.path) (version $(lib.version))")
+        # Find libraries using the new search system
+        libraries = find_libraries(library_search_paths; library_names=library_names)
+        
+        if !isempty(libraries)
+            println("Found $(length(libraries)) libraries:")
+            for lib in libraries
+                println("  - $(lib.name) ($(lib.type)): $(lib.path) (version $(lib.version))")
             end
             
-            remaining_unresolved = resolve_unresolved_symbols!(linker, system_libraries)
+            remaining_unresolved = resolve_unresolved_symbols!(linker, libraries)
             unresolved = remaining_unresolved
         else
-            println("No system libraries detected")
+            println("No libraries found")
         end
     end
     
@@ -456,19 +464,26 @@ end
 """
     link_to_executable(filenames::Vector{String}, output_filename::String; 
                       base_address::UInt64 = 0x400000, entry_symbol::String = "main",
-                      enable_system_libraries::Bool = true) -> Bool
+                      enable_system_libraries::Bool = true,
+                      library_search_paths::Vector{String} = String[],
+                      library_names::Vector{String} = String[]) -> Bool
 
 Link multiple ELF object files together and output an executable ELF file.
-If enable_system_libraries is true, will attempt to resolve symbols against
-system libraries (glibc, musl).
+- enable_system_libraries: Attempt to resolve symbols against system libraries
+- library_search_paths: Additional library search paths (equivalent to -L option)
+- library_names: Specific library names to link against (equivalent to -l option)
 """
 function link_to_executable(filenames::Vector{String}, output_filename::String; 
                            base_address::UInt64 = UInt64(0x400000), 
                            entry_symbol::String = "main",
-                           enable_system_libraries::Bool = true)
+                           enable_system_libraries::Bool = true,
+                           library_search_paths::Vector{String} = String[],
+                           library_names::Vector{String} = String[])
     # Perform normal linking
     linker = link_objects(filenames; base_address=base_address, 
-                         enable_system_libraries=enable_system_libraries)
+                         enable_system_libraries=enable_system_libraries,
+                         library_search_paths=library_search_paths,
+                         library_names=library_names)
     
     # Find entry point
     entry_point = base_address + 0x1000  # Default entry point
