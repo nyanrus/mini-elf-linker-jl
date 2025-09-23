@@ -3,4 +3,8 @@
 *.out
 *.exe
 my_first_executable
+hello_*
+test_hello*
+simple_exit_exe
+inline_hello_exe
 /tmp/*
