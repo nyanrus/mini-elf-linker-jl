@@ -1,6 +1,8 @@
 # ELF Format Structures
 # Based on the ELF specification for educational purposes
 
+using Printf
+
 # ELF Header structure
 struct ElfHeader
     magic::NTuple{4, UInt8}        # ELF magic number (0x7f, 'E', 'L', 'F')

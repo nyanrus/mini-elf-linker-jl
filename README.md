@@ -6,17 +6,19 @@ A proof-of-concept dynamic ELF linker implemented in Julia for educational purpo
 
 - **ELF File Parsing**: Complete parsing of ELF headers, section headers, symbol tables, and relocation entries
 - **Symbol Resolution**: Global symbol table management with support for weak and strong symbols
+- **System Library Support**: Automatic detection and linking against glibc and musl libc libraries
 - **Memory Management**: Virtual memory allocation for loaded sections
 - **Relocation Handling**: Basic relocation processing for x86-64 architecture
 - **Educational Focus**: Clean, well-documented code optimized for understanding rather than performance
 
 ## Architecture Overview
 
-The linker consists of three main components:
+The linker consists of four main components:
 
 1. **ELF Format Definitions** (`elf_format.jl`): Structures and constants defining the ELF file format
 2. **ELF Parser** (`elf_parser.jl`): Functions to read and parse ELF files
 3. **Dynamic Linker** (`dynamic_linker.jl`): Core linking functionality including symbol resolution and relocation
+4. **Library Support** (`library_support.jl`): System library detection and symbol resolution for glibc and musl
 
 ## Installation
 
@@ -49,18 +51,21 @@ println("Sections: $(length(elf_file.sections))")
 println("Symbols: $(length(elf_file.symbols))")
 ```
 
-### Dynamic Linking
+### Dynamic Linking with System Libraries
 
 ```julia
-# Create a dynamic linker
+# Create a dynamic linker with system library support (default)
 linker = DynamicLinker(0x400000)
 
 # Load object files
 load_object(linker, "file1.o")
 load_object(linker, "file2.o")
 
-# Perform linking
-linked_result = link_objects(["file1.o", "file2.o"])
+# Perform linking with automatic system library resolution
+linked_result = link_objects(["file1.o", "file2.o"])  # enable_system_libraries=true by default
+
+# Or explicitly disable system library support for old behavior
+linked_result_no_libs = link_objects(["file1.o", "file2.o"], enable_system_libraries=false)
 
 # Examine results
 print_symbol_table(linked_result)
@@ -70,20 +75,28 @@ print_memory_layout(linked_result)
 ### Executable Generation
 
 ```julia
-# Generate an executable ELF file from object files
+# Generate an executable ELF file from object files with system library support
 success = link_to_executable(["main.o"], "my_program")
 
 if success
     println("Executable 'my_program' generated successfully!")
-    # The executable can now be run (if all symbols are resolved)
+    # The executable can now be run (system libraries resolved automatically)
 end
 
-# You can also specify entry point and base address
+# You can also specify entry point, base address, and library options
 link_to_executable(
     ["main.o", "lib.o"], 
     "my_program",
     base_address=0x400000,
-    entry_symbol="main"
+    entry_symbol="main",
+    enable_system_libraries=true  # Default behavior
+)
+
+# Disable system library support for educational purposes
+link_to_executable(
+    ["main.o", "lib.o"], 
+    "my_program_no_libs",
+    enable_system_libraries=false  # Old behavior - unresolved symbols remain
 )
 ```
 
@@ -135,6 +148,11 @@ The ELF format consists of several key components that this linker handles:
 - `SHT_RELA`: Relocation entries with addends
 - `SHT_NOBITS`: BSS sections
 
+### System Library Support
+- `GLIBC`: GNU C Library detection and linking
+- `MUSL`: musl libc detection and linking  
+- `UNKNOWN`: Fallback for unrecognized libraries
+
 ## Examples
 
 The `examples/` directory contains several demonstration programs:
@@ -142,6 +160,7 @@ The `examples/` directory contains several demonstration programs:
 - `basic_usage.jl`: Fundamental parsing and linking operations
 - `executable_generation.jl`: Complete example of generating executable ELF files
 - `educational_walkthrough.jl`: Step-by-step educational demonstration
+- `library_support_demo.jl`: **NEW**: Demonstration of glibc/musl support and symbol resolution
 - `analyze_elf.jl`: Advanced ELF analysis tools
 - `test_program.c`: Simple C program for generating test ELF objects
 - `simple_test.c`: Self-contained test program without external dependencies
@@ -158,8 +177,9 @@ gcc -c simple_test.c -o simple_test.o
 julia basic_usage.jl
 julia executable_generation.jl
 julia educational_walkthrough.jl
+julia library_support_demo.jl  # NEW: Demo system library support
 
-# Generate your first executable!
+# Generate your first executable with automatic library linking!
 julia -e "using MiniElfLinker; link_to_executable([\"examples/simple_test.o\"], \"my_first_executable\")"
 ```
 
@@ -225,9 +245,11 @@ This is an educational project. Contributions that improve clarity, add document
 #### Linker Functions  
 - `DynamicLinker(base_address)`: Create new linker instance
 - `load_object(linker, filename)`: Load object file
-- `link_objects(filenames)`: Link multiple object files
-- `link_to_executable(filenames, output; base_address, entry_symbol)`: **Generate executable ELF**
+- `link_objects(filenames; enable_system_libraries=true)`: **UPDATED**: Link multiple object files with optional system library support
+- `link_to_executable(filenames, output; base_address, entry_symbol, enable_system_libraries=true)`: **UPDATED**: Generate executable ELF with optional system library support
 - `resolve_symbols(linker)`: Resolve symbol references
+- `find_system_libraries()`: **NEW**: Detect available system libraries (glibc, musl)
+- `resolve_unresolved_symbols!(linker, libraries)`: **NEW**: Resolve symbols against system libraries
 
 #### Output Functions
 - `write_elf_executable(linker, filename; entry_point)`: Write executable ELF file
