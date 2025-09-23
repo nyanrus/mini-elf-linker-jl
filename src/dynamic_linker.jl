@@ -160,13 +160,18 @@ Allocate memory regions for all loaded sections.
 """
 function allocate_memory_regions!(linker::DynamicLinker)
     current_address = linker.next_address
+    section_address_map = Dict{Tuple{String, UInt16}, UInt64}()  # Map (filename, section_index) to address
     
     for elf_file in linker.loaded_objects
-        for section in elf_file.sections
+        for (section_idx, section) in enumerate(elf_file.sections)
             # Only allocate memory for sections that need it
             if section.flags & SHF_ALLOC != 0 && section.size > 0
                 # Align address
                 aligned_addr = align_address(current_address, section.addralign)
+                
+                # Store section address mapping (ELF sections are 0-indexed, but Julia enumerate is 1-indexed)
+                elf_section_index = UInt16(section_idx - 1)
+                section_address_map[(elf_file.filename, elf_section_index)] = aligned_addr
                 
                 # Create memory region
                 region = MemoryRegion(
@@ -188,12 +193,48 @@ function allocate_memory_regions!(linker::DynamicLinker)
                 current_address = aligned_addr + section.size
                 
                 section_name = get_string_from_table(elf_file.string_table, section.name)
-                println("Allocated memory region for section '$section_name' at 0x$(string(aligned_addr, base=16))")
+                println("Allocated memory region for section '$section_name' (index $elf_section_index) at 0x$(string(aligned_addr, base=16))")
             end
         end
     end
     
     linker.next_address = current_address
+    
+    # Update symbol addresses to be absolute
+    update_symbol_addresses!(linker, section_address_map)
+end
+
+"""
+    update_symbol_addresses!(linker::DynamicLinker, section_address_map::Dict)
+
+Update symbol addresses to be absolute after memory allocation.
+"""
+function update_symbol_addresses!(linker::DynamicLinker, section_address_map::Dict{Tuple{String, UInt16}, UInt64})
+    for (symbol_name, symbol) in linker.global_symbol_table
+        if symbol.defined && symbol.section > 0
+            # Find the absolute address of the section
+            section_key = (symbol.source_file, symbol.section)
+            if haskey(section_address_map, section_key)
+                section_base = section_address_map[section_key]
+                new_value = section_base + symbol.value
+                
+                # Create updated symbol
+                updated_symbol = Symbol(
+                    symbol.name,
+                    new_value,
+                    symbol.size,
+                    symbol.binding,
+                    symbol.type,
+                    symbol.section,
+                    symbol.defined,
+                    symbol.source_file
+                )
+                
+                linker.global_symbol_table[symbol_name] = updated_symbol
+                println("Updated symbol '$symbol_name' address: 0x$(string(symbol.value, base=16)) -> 0x$(string(new_value, base=16))")
+            end
+        end
+    end
 end
 
 """
@@ -331,6 +372,42 @@ function link_objects(filenames::Vector{String}; base_address::UInt64 = UInt64(0
     
     println("Linking completed successfully!")
     return linker
+end
+
+"""
+    link_to_executable(filenames::Vector{String}, output_filename::String; 
+                      base_address::UInt64 = 0x400000, entry_symbol::String = "main") -> Bool
+
+Link multiple ELF object files together and output an executable ELF file.
+"""
+function link_to_executable(filenames::Vector{String}, output_filename::String; 
+                           base_address::UInt64 = UInt64(0x400000), 
+                           entry_symbol::String = "main")
+    # Perform normal linking
+    linker = link_objects(filenames; base_address=base_address)
+    
+    # Find entry point
+    entry_point = base_address + 0x1000  # Default entry point
+    if haskey(linker.global_symbol_table, entry_symbol)
+        entry_symbol_info = linker.global_symbol_table[entry_symbol]
+        if entry_symbol_info.defined
+            entry_point = entry_symbol_info.value
+            println("Entry point set to '$entry_symbol' at 0x$(string(entry_point, base=16))")
+        else
+            println("Warning: Entry symbol '$entry_symbol' is not defined, using default entry point")
+        end
+    else
+        println("Warning: Entry symbol '$entry_symbol' not found, using default entry point")
+    end
+    
+    # Write executable
+    try
+        write_elf_executable(linker, output_filename; entry_point=entry_point)
+        return true
+    catch e
+        println("Error writing executable: $e")
+        return false
+    end
 end
 
 """
