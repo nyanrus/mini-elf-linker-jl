@@ -1,0 +1,19 @@
+#!/usr/bin/env julia
+
+# Mini ELF Linker - LLD Compatible Command-Line Interface
+# Single executable script for the Mini ELF Linker
+
+# Mathematical model: Command-line interface as a function composition
+# CLI = execute_linker ∘ parse_arguments ∘ ARGS
+
+# Add the src directory to the module search path if running as standalone script
+if abspath(PROGRAM_FILE) == @__FILE__
+    push!(LOAD_PATH, joinpath(dirname(@__FILE__), "..", "src"))
+end
+
+using MiniElfLinker
+
+# Execute the main CLI function
+if abspath(PROGRAM_FILE) == @__FILE__
+    exit(MiniElfLinker.main(ARGS))
+end

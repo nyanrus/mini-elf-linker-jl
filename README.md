@@ -1,6 +1,6 @@
 # Mini ELF Linker in Julia
 
-A proof-of-concept dynamic ELF linker implemented in Julia for educational purposes. This project provides a simple yet comprehensive implementation of an ELF (Executable and Linkable Format) file parser and dynamic linker, making it ideal for studying linker concepts and ELF file structure.
+A proof-of-concept dynamic ELF linker implemented in Julia for educational purposes. This project provides a simple yet comprehensive implementation of an ELF (Executable and Linkable Format) file parser and dynamic linker, with **LLD-compatible command-line interface** for easy deployment as a single executable.
 
 ## Features
 
@@ -9,16 +9,19 @@ A proof-of-concept dynamic ELF linker implemented in Julia for educational purpo
 - **System Library Support**: Automatic detection and linking against glibc and musl libc libraries
 - **Memory Management**: Virtual memory allocation for loaded sections
 - **Relocation Handling**: Basic relocation processing for x86-64 architecture
+- **LLD-Compatible CLI**: Command-line interface compatible with LLD/GCC linker syntax
+- **Single Executable**: Can be packaged as a standalone executable for easy deployment
 - **Educational Focus**: Clean, well-documented code optimized for understanding rather than performance
 
 ## Architecture Overview
 
-The linker consists of four main components:
+The linker consists of five main components:
 
 1. **ELF Format Definitions** (`elf_format.jl`): Structures and constants defining the ELF file format
 2. **ELF Parser** (`elf_parser.jl`): Functions to read and parse ELF files
 3. **Dynamic Linker** (`dynamic_linker.jl`): Core linking functionality including symbol resolution and relocation
 4. **Library Support** (`library_support.jl`): System library detection and symbol resolution for glibc and musl
+5. **Command-Line Interface** (`cli.jl`): LLD-compatible argument parsing and execution
 
 ## Installation
 
@@ -33,6 +36,32 @@ julia --project=.
 # Import the package
 using MiniElfLinker
 ```
+
+## Command-Line Usage
+
+The linker provides an LLD-compatible command-line interface:
+
+```bash
+# Basic usage
+./bin/mini-elf-linker [OPTIONS] <input-files>...
+
+# Examples
+./bin/mini-elf-linker file.o                           # Link single object
+./bin/mini-elf-linker -o program file.o                # Specify output name
+./bin/mini-elf-linker -lm -lpthread file.o             # Link with libraries
+./bin/mini-elf-linker -L/opt/lib -lmath file.o         # Custom library path
+./bin/mini-elf-linker --entry start file.o             # Custom entry point
+./bin/mini-elf-linker -v file.o                        # Verbose output
+```
+
+### LLD Command Equivalence
+
+| LLD/GCC Command | Mini ELF Linker Equivalent |
+|---|---|
+| `ld.lld file.o` | `mini-elf-linker file.o` |
+| `ld.lld -o prog file.o` | `mini-elf-linker -o prog file.o` |
+| `ld.lld -lm file.o` | `mini-elf-linker -lm file.o` |
+| `ld.lld -L/opt/lib -lmath file.o` | `mini-elf-linker -L/opt/lib -lmath file.o` |
 
 ## Quick Start
 

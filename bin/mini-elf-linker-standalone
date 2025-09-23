@@ -1,0 +1,34 @@
+#!/usr/bin/env julia
+
+# Self-contained Mini ELF Linker executable
+# This file includes all necessary code to run independently
+
+# Enable module loading in standalone mode
+if abspath(PROGRAM_FILE) == @__FILE__
+    # Get the directory where this script is located
+    script_dir = dirname(@__FILE__)
+    
+    # If we're in the bin directory, add the parent src directory
+    if basename(script_dir) == "bin"
+        push!(LOAD_PATH, joinpath(dirname(script_dir), "src"))
+    else
+        # If we're at the repository root, add the src directory
+        push!(LOAD_PATH, joinpath(script_dir, "src"))
+    end
+end
+
+try
+    using MiniElfLinker
+    
+    # Execute the main CLI function
+    if abspath(PROGRAM_FILE) == @__FILE__
+        exit(MiniElfLinker.main(ARGS))
+    end
+catch LoadError
+    # If the module can't be loaded, provide a helpful error message
+    println("Error: Cannot load MiniElfLinker module.")
+    println("This executable requires the MiniElfLinker source code to be available.")
+    println("Please ensure this script is run from the repository directory or")
+    println("that the MiniElfLinker package is properly installed.")
+    exit(1)
+end
