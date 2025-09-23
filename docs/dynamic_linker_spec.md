@@ -86,42 +86,58 @@ function allocate_section(linker::DynamicLinker, section::SectionHeader, size::I
 end
 ```
 
-### Relocation Application → `apply_relocations` function
+### Relocation Application → `perform_relocation!` function
 
 ```math
-apply\_relocations: DynamicLinker \times List(RelocationEntry) \to DynamicLinker
+perform\_relocation: DynamicLinker \times ElfFile \times RelocationEntry \to DynamicLinker
 ```
 
-**Mathematical operations**: Address computation and patch application
+**Mathematical operations**: Symbol index correction and address computation
 
 ```math
+symbol\_lookup(index_{elf}) = \begin{cases}
+symbols[index_{elf} + 1] & \text{if } index_{elf} > 0 \\
+null\_symbol & \text{if } index_{elf} = 0
+\end{cases}
+```
+
+**Critical Index Correction**: ELF uses 0-based indexing, Julia uses 1-based indexing
+
+```math
+index_{julia} = index_{elf} + 1
+```
+
+**Relocation value computation**:
+```math
 relocate(entry) = \begin{cases}
-target\_addr + symbol\_addr & \text{if R\_X86\_64\_64} \\
-symbol\_addr - current\_addr & \text{if R\_X86\_64\_PC32} \\
-symbol\_addr + addend & \text{if R\_X86\_64\_RELA}
+symbol\_addr + addend & \text{if R\_X86\_64\_64} \\
+symbol\_addr + addend - (target\_addr + 4) & \text{if R\_X86\_64\_PC32} \\
+symbol\_addr + addend - (target\_addr + 4) & \text{if R\_X86\_64\_PLT32}
 \end{cases}
 ```
 
 **Direct code correspondence**:
 ```julia
-# Mathematical model: apply_relocations: DynamicLinker × List(RelocationEntry) → DynamicLinker
-function apply_relocations(linker::DynamicLinker, relocations::Vector{RelocationEntry})::DynamicLinker
-    for reloc in relocations                       # ↔ relocation iteration
-        symbol = resolve_symbol_reference(reloc.symbol_index)  # ↔ symbol lookup
-        target_address = reloc.offset + section_base_address   # ↔ target calculation
-        
-        # Mathematical case analysis for relocation types
-        relocated_value = if reloc.type == R_X86_64_64
-            symbol.address + reloc.addend           # ↔ absolute addressing
-        elseif reloc.type == R_X86_64_PC32
-            symbol.address - target_address         # ↔ relative addressing  
-        else
-            error("Unsupported relocation type")
-        end
-        
-        patch_memory(target_address, relocated_value)  # ↔ memory patching
+# Mathematical model: perform_relocation: DynamicLinker × ElfFile × RelocationEntry → DynamicLinker
+function perform_relocation!(linker::DynamicLinker, elf_file::ElfFile, relocation::RelocationEntry)
+    sym_index = elf64_r_sym(relocation.info)      # ↔ extract symbol index
+    
+    # Critical fix: Convert from 0-based ELF indexing to 1-based Julia indexing
+    julia_index = sym_index + 1                   # ↔ index correction
+    symbol = elf_file.symbols[julia_index]        # ↔ correct symbol lookup
+    
+    # Symbol resolution with global table lookup
+    symbol_name = get_string_from_table(elf_file.symbol_string_table, symbol.name)
+    if haskey(linker.global_symbol_table, symbol_name)
+        symbol_value = linker.global_symbol_table[symbol_name].value  # ↔ address resolution
     end
-    return linker
+    
+    # PC-relative relocation calculation with correct target address
+    if rel_type == R_X86_64_PLT32 || rel_type == R_X86_64_PC32
+        target_addr = text_region.base_address + relocation.offset + 4  # ↔ next instruction address
+        value = Int64(symbol_value) + relocation.addend - Int64(target_addr)  # ↔ relative offset
+        apply_relocation_to_region!(text_region, relocation.offset, value, 4)
+    end
 end
 ```
 

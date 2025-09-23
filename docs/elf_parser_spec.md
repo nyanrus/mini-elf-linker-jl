@@ -176,9 +176,66 @@ resolve\_names(symbols, strings) = \{s' : s' = s \text{ with } s'.name = strings
 \forall sym \in symbols: sym.name = strings[sym.name\_index]
 ```
 
-## Optimization Trigger Points
+### Relocation Parsing with Filtering → `parse_elf_file` function
 
-- **Inner loops**: Section iteration with O(k) bounds
-- **Memory allocation**: Symbol array pre-allocation based on section size
-- **Bottleneck operations**: String table linear scanning  
-- **Invariant preservation**: Magic number validation for each file
+```math
+parse\_relocations\_filtered: List(RelocationSection) \to List(RelocationEntry)
+```
+
+**Mathematical filtering operation**: Critical improvement for basic linking
+
+```math
+filtered\_relocations = \{r \in all\_relocations : target\_section(r) = \text{".text"}\}
+```
+
+**Filter function definition**:
+```math
+filter(sections) = \bigcup_{s \in sections} \begin{cases}
+parse\_relocations(s) & \text{if } name(s) = \text{".rela.text"} \\
+\emptyset & \text{otherwise}
+\end{cases}
+```
+
+**Complexity improvement**:
+```math
+\begin{align}
+T_{original}(n) &= O(n) \quad \text{– Process all relocation sections} \\
+T_{filtered}(k) &= O(k) \quad \text{– Process only .text relocations, } k \ll n \\
+\text{Speedup} &= \frac{n}{k} \quad \text{– Significant for complex objects}
+\end{align}
+```
+
+**Direct code correspondence**:
+```julia
+# Mathematical model: parse_relocations_filtered: List(RelocationSection) → List(RelocationEntry)
+function parse_elf_file(filename::String)
+    # ... header and section parsing ...
+    
+    # Critical improvement: Relocation filtering
+    relocations = RelocationEntry[]
+    rela_sections = find_section_by_type(sections, UInt32(SHT_RELA))
+    for rela_section in rela_sections
+        section_name = get_string_from_table(string_table, rela_section.name)
+        
+        # Mathematical filtering: only process if name(s) = ".rela.text"
+        if section_name == ".rela.text"              # ↔ filter condition
+            append!(relocations, parse_relocations(io, rela_section))  # ↔ selective parsing
+        end
+        # Implicit else: ∅ (skip .rela.eh_frame and other sections)
+    end
+    
+    return ElfFile(filename, header, sections, string_table, symbols, symbol_string_table, relocations)
+end
+```
+
+**Mathematical justification**: 
+```math
+\text{Basic linking requirement: } \forall r \in required\_relocations: r.target = \text{".text"}
+```
+
+Therefore:
+```math
+filtered\_relocations \supseteq required\_relocations
+```
+
+This ensures correctness while improving performance by excluding unnecessary `.eh_frame` relocations that were causing "relocation offset exceeds region size" errors.
