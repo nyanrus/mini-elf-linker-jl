@@ -352,13 +352,14 @@ function perform_relocation!(linker::DynamicLinker, elf_file::ElfFile, relocatio
         println("R_X86_64_64 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")
     elseif rel_type == R_X86_64_PC32
         # PC-relative 32-bit
-        target_addr = text_region.base_address + relocation.offset
+        target_addr = text_region.base_address + relocation.offset + 4  # +4 for next instruction
         value = Int64(symbol_value) + relocation.addend - Int64(target_addr)
         apply_relocation_to_region!(text_region, relocation.offset, value, 4)
         println("R_X86_64_PC32 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")
     elseif rel_type == R_X86_64_PLT32
         # PLT 32-bit address (for static linking, treat like PC32)
-        target_addr = text_region.base_address + relocation.offset
+        # For call instructions, the target address should be the address of the next instruction
+        target_addr = text_region.base_address + relocation.offset + 4  # +4 for next instruction
         value = Int64(symbol_value) + relocation.addend - Int64(target_addr)
         apply_relocation_to_region!(text_region, relocation.offset, value, 4)
         println("R_X86_64_PLT32 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")

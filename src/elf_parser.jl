@@ -260,11 +260,17 @@ function parse_elf_file(filename::String)
             end
         end
         
-        # Find and parse relocations
+        # Find and parse relocations - only include .text relocations for now
         relocations = RelocationEntry[]
         rela_sections = find_section_by_type(sections, UInt32(SHT_RELA))
         for rela_section in rela_sections
-            append!(relocations, parse_relocations(io, rela_section))
+            # Get the section name to filter out non-text relocations
+            section_name = get_string_from_table(string_table, rela_section.name)
+            
+            # Only process .rela.text sections for basic linking
+            if section_name == ".rela.text"
+                append!(relocations, parse_relocations(io, rela_section))
+            end
         end
         
         return ElfFile(
