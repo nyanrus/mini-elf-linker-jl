@@ -424,23 +424,35 @@ function link_objects(filenames::Vector{String}; base_address::UInt64 = UInt64(0
     # Resolve symbols
     unresolved = resolve_symbols(linker)
     
-    # Attempt to resolve against libraries if enabled
+    # Attempt to resolve against libraries
     if enable_system_libraries && !isempty(unresolved)
-        println("Searching for libraries...")
+        all_libraries = LibraryInfo[]
         
-        # Find libraries using the new search system
-        libraries = find_libraries(library_search_paths; library_names=library_names)
+        # Always try to link libc automatically (like lld does)
+        default_libc = find_default_libc()
+        if default_libc !== nothing
+            push!(all_libraries, default_libc)
+            println("Found default libc: $(default_libc.type) at $(default_libc.path)")
+        end
         
-        if !isempty(libraries)
-            println("Found $(length(libraries)) libraries:")
-            for lib in libraries
-                println("  - $(lib.name) ($(lib.type)): $(lib.path) (version $(lib.version))")
-            end
+        # Find explicitly requested libraries (-l equivalent)
+        if !isempty(library_names)
+            requested_libs = find_libraries(library_search_paths; library_names=library_names)
+            append!(all_libraries, requested_libs)
             
-            remaining_unresolved = resolve_unresolved_symbols!(linker, libraries)
+            if !isempty(requested_libs)
+                println("Found $(length(requested_libs)) requested libraries:")
+                for lib in requested_libs
+                    println("  - $(lib.name) ($(lib.type)): $(lib.path)")
+                end
+            end
+        end
+        
+        if !isempty(all_libraries)
+            remaining_unresolved = resolve_unresolved_symbols!(linker, all_libraries)
             unresolved = remaining_unresolved
         else
-            println("No libraries found")
+            println("No libraries found for linking")
         end
     end
     

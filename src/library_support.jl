@@ -287,16 +287,93 @@ function matches_library_pattern(filename::String)
 end
 
 """
+    find_crt_objects() -> Dict{String, String}
+
+Find C runtime objects (crt1.o, crti.o, crtn.o) required for program startup.
+"""
+function find_crt_objects()
+    crt_objects = Dict{String, String}()
+    
+    # Common CRT object search paths
+    search_paths = [
+        "/usr/lib/x86_64-linux-gnu",
+        "/usr/lib64", 
+        "/lib64",
+        "/usr/lib",
+        "/lib"
+    ]
+    
+    # CRT objects we need to find
+    crt_names = ["crt1.o", "crti.o", "crtn.o"]
+    
+    for search_path in search_paths
+        if !isdir(search_path)
+            continue
+        end
+        
+        for crt_name in crt_names
+            if haskey(crt_objects, crt_name)
+                continue  # Already found
+            end
+            
+            crt_path = joinpath(search_path, crt_name)
+            if isfile(crt_path)
+                crt_objects[crt_name] = crt_path
+            end
+        end
+    end
+    
+    return crt_objects
+end
+
+"""
+    find_default_libc() -> Union{LibraryInfo, Nothing}
+
+Find the default libc that should be automatically linked (like lld does).
+Only libc is linked automatically, other libraries must be explicitly requested.
+"""
+function find_default_libc()
+    # Search for libc.so in standard locations
+    search_paths = get_default_library_search_paths()
+    
+    for search_path in search_paths
+        if !isdir(search_path)
+            continue
+        end
+        
+        # Look for libc.so.6 or libc.so
+        for libc_name in ["libc.so.6", "libc.so"]
+            libc_path = joinpath(search_path, libc_name)
+            if isfile(libc_path)
+                lib_type = detect_libc_type(libc_path)
+                if lib_type != UNKNOWN
+                    version = extract_library_version(libc_path)
+                    symbols = extract_library_symbols(libc_path)
+                    return LibraryInfo(lib_type, libc_path, "c", version, symbols)
+                end
+            end
+        end
+    end
+    
+    return nothing
+end
+
+"""
     find_libraries(search_paths::Vector{String} = String[]; library_names::Vector{String} = String[]) -> Vector{LibraryInfo}
 
-Find libraries using lld-style search. 
+Find specific libraries using lld-style search. 
 - search_paths: Additional search paths (equivalent to -L option)
 - library_names: Specific library names to search for (equivalent to -l option)
 
-If search_paths is empty, uses default system search paths.
-If library_names is empty, finds all available libraries.
+Unlike the old behavior, this only finds libraries explicitly requested via library_names.
+For automatic libc linking, use find_default_libc().
 """
 function find_libraries(search_paths::Vector{String} = String[]; library_names::Vector{String} = String[])
+    # Return empty if no specific libraries requested (lld-compatible behavior)
+    if isempty(library_names)
+        return LibraryInfo[]
+    end
+    
     # Combine custom search paths with default ones
     all_search_paths = String[]
     
@@ -322,52 +399,92 @@ end
 """
     extract_library_symbols(library_path::String) -> Set{String}
 
-Extract available symbols from a library (simplified implementation).
+Extract available symbols from a library dynamically using objdump and nm commands.
 """
 function extract_library_symbols(library_path::String)
-    # Extract library name to determine symbol set
-    lib_name = extract_library_name_from_path(library_path)
+    symbols = Set{String}()
     
-    # Return appropriate symbols based on library type
-    if lib_name == "c"
-        # libc symbols
-        return Set{String}([
-            "printf", "sprintf", "fprintf", "snprintf",
-            "malloc", "free", "calloc", "realloc",
-            "strlen", "strcpy", "strcmp", "strcat",
-            "memcpy", "memset", "memcmp", "memmove",
-            "exit", "_exit", "abort",
-            "open", "close", "read", "write",
-            "getpid", "getuid", "getgid"
-        ])
-    elseif lib_name == "m" || lib_name == "math"
-        # libmath symbols
-        return Set{String}([
-            "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
-            "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
-            "exp", "exp2", "log", "log2", "log10",
-            "pow", "sqrt", "cbrt", "fabs", "ceil", "floor", "round",
-            "fmod", "remainder", "frexp", "ldexp", "modf"
-        ])
-    elseif lib_name == "pthread"
-        # pthread symbols
-        return Set{String}([
-            "pthread_create", "pthread_join", "pthread_detach", "pthread_exit",
-            "pthread_mutex_init", "pthread_mutex_destroy", "pthread_mutex_lock", 
-            "pthread_mutex_unlock", "pthread_mutex_trylock",
-            "pthread_cond_init", "pthread_cond_destroy", "pthread_cond_wait",
-            "pthread_cond_signal", "pthread_cond_broadcast"
-        ])
-    elseif lib_name == "dl"
-        # libdl symbols
-        return Set{String}([
-            "dlopen", "dlclose", "dlsym", "dlerror"
-        ])
-    else
-        # For unknown libraries, try to extract symbols using nm if available
-        # For now, return empty set as a placeholder
-        return Set{String}()
+    if !isfile(library_path)
+        return symbols
     end
+    
+    # Check if it's a linker script and find real library paths
+    real_library_paths = [library_path]
+    try
+        content = read(library_path, String)
+        if occursin("GROUP", content) || occursin("OUTPUT_FORMAT", content)
+            # It's a linker script, extract the real library paths
+            real_library_paths = String[]
+            for line in split(content, '\n')
+                # Look for patterns like: GROUP ( /path/to/real/lib.so.6 )
+                for m in eachmatch(r"/[^\s)]+\.(?:so\.?[0-9]*|a)", line)
+                    if isfile(m.match)
+                        push!(real_library_paths, m.match)
+                    end
+                end
+            end
+        end
+    catch e
+        # If reading fails, assume it's binary and proceed with original path
+    end
+    
+    # Extract symbols from all real library files
+    for real_library_path in real_library_paths
+        try
+            if endswith(real_library_path, ".so") || occursin(r"\.so\.", real_library_path)
+                # For shared libraries, use objdump -T for dynamic symbols
+                result = read(`objdump -T $real_library_path`, String)
+                for line in split(result, '\n')
+                    # objdump -T output format: address flags section size version symbol_name
+                    if occursin(r"^[0-9a-f]+.*DF", line) || occursin(r"^\w.*DF", line)
+                        parts = split(strip(line))
+                        if length(parts) >= 6
+                            symbol_name = parts[end]
+                            # Remove version suffixes like (GLIBC_2.2.5)
+                            clean_symbol = replace(symbol_name, r"\(.*\)" => "")
+                            if !isempty(clean_symbol) && !startswith(clean_symbol, "_")
+                                push!(symbols, clean_symbol)
+                            end
+                        end
+                    end
+                end
+            else
+                # For static libraries (.a), use nm
+                result = read(`nm -g $real_library_path`, String)
+                for line in split(result, '\n')
+                    line = strip(line)
+                    if isempty(line)
+                        continue
+                    end
+                    
+                    # nm output format: address type symbol_name
+                    parts = split(line)
+                    if length(parts) >= 2
+                        if length(parts) == 3
+                            symbol_type = parts[2]
+                            symbol_name = parts[3]
+                        else
+                            symbol_type = parts[1]
+                            symbol_name = parts[2]
+                        end
+                        
+                        # Only include defined symbols (T, D, B, etc.) not undefined (U)
+                        if symbol_type != "U" && !isempty(symbol_name)
+                            # Remove version suffixes like @@GLIBC_2.2.5
+                            clean_symbol = split(symbol_name, '@')[1]
+                            if !startswith(clean_symbol, "_")
+                                push!(symbols, clean_symbol)
+                            end
+                        end
+                    end
+                end
+            end
+        catch e
+            println("Warning: Failed to extract symbols from $real_library_path: $e")
+        end
+    end
+    
+    return symbols
 end
 
 """
