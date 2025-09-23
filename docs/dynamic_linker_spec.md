@@ -1,251 +1,209 @@
-# Dynamic Linker Specification
-
-## Mathematical Foundation
-
-**Module:** `dynamic_linker.jl`
-
-**Purpose:** Mathematical operations for symbol resolution, memory allocation, and object linking
-
-**Domain:** 
-$$\mathcal{D} = \{\text{ELF objects}\} \times \{\text{Symbol tables}\} \times \{\text{Memory layouts}\}$$
-
-**Codomain:** 
-$$\mathcal{R} = \{\text{Linked executables}\} \cup \{\text{Resolved symbols}\} \cup \{\text{Memory mappings}\}$$
-
-## Data Structure Specifications
-
-### Symbol Representation
-
-**Structure:** `Symbol`
-
-**Mathematical Model:** 
-$$S = \langle n, v, s, b, t, \text{sec}, d, \text{src} \rangle$$
-
-**Field Definitions:**
-$$\begin{align}
-n &\in \text{String} &&\text{Symbol name} \\
-v &\in \mathbb{N}_{64} &&\text{Symbol value/address} \\
-s &\in \mathbb{N}_{64} &&\text{Symbol size} \\
-b &\in \{0, 1, 2, 10, 11, 12, 13\} &&\text{Binding type} \\
-t &\in \{0, 1, 2, 3, 4\} &&\text{Symbol type} \\
-\text{sec} &\in \mathbb{N}_{16} &&\text{Section index} \\
-d &\in \{\text{true}, \text{false}\} &&\text{Definition status} \\
-\text{src} &\in \text{String} &&\text{Source file}
-\end{align}$$
-
-**Invariants:** 
-$$\mathcal{I}_S = \left\{
-\begin{aligned}
-&d = \text{true} \implies v \neq 0 \\
-&b \in \{\text{STB\_LOCAL}, \text{STB\_GLOBAL}, \text{STB\_WEAK}\}
-\end{aligned}
-\right\}$$
-
-### Memory Region Model
-
-**Structure:** `MemoryRegion`
-
-**Mathematical Model:** $M = \langle data, base, size, perms \rangle$
-
-**Memory Mapping:**
-$$\begin{align}
-\text{Address Space} &: [base, base + size) \subseteq \mathbb{N}_{64} \\
-\text{Data Mapping} &: \text{Addr} \to \text{Byte} \\
-\text{Permissions} &: \{R, W, X\} \subseteq \text{perms}
-\end{align}$$
-
-**Invariants:** $\mathcal{I}_M = \{
-  |data| = size, \quad
-  \text{base} \bmod \text{PAGE\_SIZE} = 0, \quad
-  \text{size} > 0
-\}$
-
-### Dynamic Linker State
-
-**Structure:** `DynamicLinker`
-
-**Mathematical Model:** $L = \langle objs, syms, mem, base \rangle$
-
-**State Components:**
-$$\begin{align}
-objs &: \text{List}(\texttt{ElfFile}) && \text{Loaded objects} \\
-syms &: \text{Map}(\text{String}, \texttt{Symbol}) && \text{Global symbol table} \\
-mem &: \text{List}(\texttt{MemoryRegion}) && \text{Memory layout} \\
-base &: \mathbb{N}_{64} && \text{Base load address}
-\end{align}$$
-
-**Invariants:** $\mathcal{I}_L = \{
-  \text{Unique symbols: } \forall s_1, s_2 \in \text{dom}(syms): s_1 \neq s_2 \implies syms[s_1].v \neq syms[s_2].v, \quad
-  \text{Non-overlapping memory: } \forall m_1, m_2 \in mem: \text{disjoint}(m_1, m_2)
-\}$
-
-## Function Specifications
-
-### Symbol Resolution
-
-**Function:** `resolve_symbols(linker)`
-
-**Signature:** 
-$$f_{\text{resolve}}: \texttt{DynamicLinker} \to \texttt{DynamicLinker} \cup \{\text{Error}\}$$
-
-**Precondition:** 
-$$\text{All objects loaded into linker state}$$
-
-**Postcondition:** 
-$$\text{All resolvable symbols have defined values}$$
-
-**Algorithm:**
-$$\begin{align}
-&\textbf{Input:} \quad \text{DynamicLinker } L \\
-&\textbf{Step 1:} \quad \text{Collect all symbol definitions} \\
-&\textbf{Step 2:} \quad \text{For each undefined symbol } u: \\
-&\qquad\qquad \text{Find definition } d \text{ in global table} \\
-&\qquad\qquad \text{If strong binding: assign } u.v \leftarrow d.v \\
-&\qquad\qquad \text{If weak binding: use default or skip} \\
-&\textbf{Step 3:} \quad \text{Verify no unresolved strong symbols} \\
-&\textbf{Output:} \quad \text{Updated linker state}
-\end{align}$$
-
-### Object Loading
-
-**Function:** `load_object(linker, elf_file)`
-
-**Signature:** $f_{load}: \texttt{DynamicLinker} \times \texttt{ElfFile} \to \texttt{DynamicLinker}$
-
-**Precondition:** Valid ELF object file
-
-**Postcondition:** Object symbols added to global table, sections allocated
-
-**Algorithm:**
-$$\begin{align}
-&\textbf{Input:} \text{DynamicLinker } L, \text{ElfFile } F \\
-&\textbf{Step 1:} \text{Allocate memory for loadable sections} \\
-&\textbf{Step 2:} \text{Add symbols to global symbol table} \\
-&\textbf{Step 3:} \text{Update memory layout} \\
-&\textbf{Step 4:} \text{Record object in loaded objects list} \\
-&\textbf{Output:} \text{Updated linker } L'
-\end{align}$$
-
-### Relocation Processing
-
-**Function:** `apply_relocations(linker, relocations)`
-
-**Signature:** $f_{relocate}: \texttt{DynamicLinker} \times \text{List}(\texttt{RelocationEntry}) \to \texttt{DynamicLinker}$
-
-**Precondition:** All referenced symbols resolved
-
-**Postcondition:** All relocations applied to memory regions
-
-**Algorithm:**
-$$\begin{align}
-&\textbf{For each relocation } r \in \text{relocations}: \\
-&\quad \text{Let } sym = \text{resolve\_symbol}(r.\text{symbol}) \\
-&\quad \text{Let } addr = r.\text{offset} + \text{section\_base} \\
-&\quad \text{Apply relocation type:} \\
-&\quad\quad \text{R\_X86\_64\_64: } \text{mem}[addr] \leftarrow sym.v \\
-&\quad\quad \text{R\_X86\_64\_PC32: } \text{mem}[addr] \leftarrow sym.v - addr \\
-&\quad\quad \text{Other types similarly}
-\end{align}$$
-
-### Memory Allocation
-
-**Function:** `allocate_section(linker, section, size)`
-
-**Signature:** $f_{alloc}: \texttt{DynamicLinker} \times \texttt{SectionHeader} \times \mathbb{N} \to \texttt{MemoryRegion}$
-
-**Precondition:** 
-$$\begin{align}
-&\text{size} > 0 \\
-&\text{section permissions valid}
-\end{align}$$
-
-**Postcondition:** Non-overlapping memory region allocated
-
-**Algorithm:**
-$$\begin{align}
-&\text{Find next available address } addr \\
-&\text{Align } addr \text{ to section alignment} \\
-&\text{Create memory region } M = \langle \text{data}, addr, \text{size}, \text{perms} \rangle \\
-&\text{Add } M \text{ to linker memory layout}
-\end{align}$$
-
-### Executable Generation
-
-**Function:** `link_to_executable(object_files, output_name)`
-
-**Signature:** $f_{link}: \text{List}(\text{String}) \times \text{String} \to \{\text{true}, \text{false}\}$
-
-**Precondition:** All object files are valid ELF objects
-
-**Postcondition:** Executable file created or error reported
-
-**Algorithm:**
-$$\begin{align}
-&\textbf{Step 1:} \text{Create linker instance } L \\
-&\textbf{Step 2:} \text{Load all object files into } L \\
-&\textbf{Step 3:} \text{Resolve all symbols} \\
-&\textbf{Step 4:} \text{Apply all relocations} \\
-&\textbf{Step 5:} \text{Generate executable ELF file} \\
-&\textbf{Step 6:} \text{Write to output file}
-\end{align}$$
-
-## Mathematical Properties
-
-### Complexity Analysis
-
-**Symbol Resolution:** 
-$$\mathcal{O}(n \cdot m) \text{ where } n = \text{symbols}, m = \text{objects}$$
-
-**Object Loading:** 
-$$\mathcal{O}(s + \text{sym}) \text{ where } s = \text{sections}, \text{sym} = \text{symbols}$$
-
-**Relocation:** 
-$$\mathcal{O}(r) \text{ where } r = \text{number of relocations}$$
-
-**Memory Allocation:** 
-$$\mathcal{O}(\log(m)) \text{ with sorted memory regions}$$
-
-**Complete Linking:** 
-$$\mathcal{O}(n \cdot m + r + s \cdot \log(s))$$
-
-### Correctness Properties
-
-**Symbol Uniqueness:**
-$$\forall s_1, s_2 \in \text{GlobalSymbols}: s_1.name = s_2.name \implies s_1 = s_2$$
-
-**Memory Safety:**
-$$\forall m_1, m_2 \in \text{MemoryRegions}: m_1 \neq m_2 \implies \text{disjoint}(m_1, m_2)$$
-
-**Relocation Correctness:**
-$$\forall r \in \text{Relocations}: \text{applied}(r) \implies \text{target\_address\_valid}(r)$$
-
-**Link Completeness:**
-$$\text{successful\_link}(objs) \implies \forall sym \in \text{undefined}: \exists def \in \text{definitions}: \text{resolves}(def, sym)$$
-
-### Verification Conditions
-
-**Symbol Resolution Termination:** No circular symbol dependencies
-
-**Memory Layout Validity:** All sections fit within address space
-
-**Relocation Bounds:** All relocations target valid memory regions
-
-**Type Safety:** Symbol types compatible with usage contexts
-
-## Dependencies
-
-**Module Dependencies:**
-$$\begin{align}
-\text{elf\_format.jl} &\implies \text{Data structure definitions} \\
-\text{elf\_parser.jl} &\implies \text{Object file parsing} \\
-\text{elf\_writer.jl} &\implies \text{Executable generation} \\
-\text{library\_support.jl} &\implies \text{System library resolution}
-\end{align}$$
-
-**Mathematical Dependencies:**
-$$\begin{align}
-\text{Graph algorithms} &\implies \text{Symbol dependency resolution} \\
-\text{Memory management} &\implies \text{Address space allocation} \\
-\text{Set theory} &\implies \text{Symbol table operations} \\
-\text{Function composition} &\implies \text{Linking pipeline}
-\end{align}$$
+# Dynamic Linker Mathematical Specification
+
+## Mathematical Model
+
+```math
+\text{Domain: } \mathcal{D} = \{\text{ELF objects}, \text{Symbol tables}, \text{Memory layouts}\}
+\text{Range: } \mathcal{R} = \{\text{Linked executables}, \text{Resolved symbols}, \text{Memory mappings}\}
+\text{Mapping: } link: \mathcal{D} \to \mathcal{R}
+```
+
+## Operations
+
+```math
+\text{Primary operations: } \{resolve\_symbols, load\_objects, apply\_relocations, allocate\_memory\}
+\text{Invariants: } \{symbol\_uniqueness, memory\_non\_overlap, address\_valid\}
+\text{Complexity bounds: } O(n \cdot m + r) \text{ where } n,m,r = \text{symbols, objects, relocations}
+```
+
+## Implementation Correspondence
+
+### Symbol Resolution → `resolve_symbols` function
+
+```math
+resolve: DynamicLinker \to DynamicLinker \cup \{Error\}
+```
+
+**Mathematical operation**: Symbol table lookup and binding resolution
+
+```math
+lookup\_symbol(name, tables) = \begin{cases}
+address & \text{if } name \in global\_symbols \\
+weak\_default & \text{if } name \in weak\_symbols \\
+error & \text{if } name \text{ unresolved and strong}
+\end{cases}
+```
+
+**Direct code correspondence**:
+```julia
+# Mathematical model: resolve: DynamicLinker → DynamicLinker ∪ {Error}
+function resolve_symbols(linker::DynamicLinker)::DynamicLinker
+    # Implementation of: symbol table lookup with binding priority
+    for symbol in get_undefined_symbols(linker)     # ↔ undefined symbol iteration
+        definition = lookup_global(symbol.name)     # ↔ global table lookup
+        if definition !== nothing
+            symbol.address = definition.address     # ↔ address assignment
+            symbol.resolved = true                  # ↔ state update
+        elseif symbol.binding == STB_WEAK
+            symbol.address = 0                      # ↔ weak default handling
+            symbol.resolved = true
+        else
+            error("Unresolved strong symbol: $(symbol.name)")  # ↔ error condition
+        end
+    end
+    return linker
+end
+```
+
+### Memory Allocation → `allocate_section` function
+
+```math
+allocate: DynamicLinker \times Section \times Size \to MemoryRegion
+```
+
+**Mathematical constraint**: Non-overlapping memory allocation
+
+```math
+\forall m_1, m_2 \in memory\_regions: 
+[m_1.base, m_1.base + m_1.size) \cap [m_2.base, m_2.base + m_2.size) = \emptyset
+```
+
+**Direct code correspondence**:
+```julia
+# Mathematical model: allocate: DynamicLinker × Section × Size → MemoryRegion
+function allocate_section(linker::DynamicLinker, section::SectionHeader, size::Int)::MemoryRegion
+    # Implementation of: find_next_available_address with alignment
+    current_address = linker.next_address           # ↔ address tracking
+    aligned_address = align_to_page(current_address)  # ↔ alignment constraint
+    
+    # Verify non-overlap: ∀m ∈ memory_regions: disjoint(new_region, m)
+    verify_no_overlap(aligned_address, size, linker.memory_regions)
+    
+    region = MemoryRegion(Vector{UInt8}(undef, size), aligned_address, size, section.flags)
+    push!(linker.memory_regions, region)           # ↔ region registration
+    linker.next_address = aligned_address + size   # ↔ address advancement
+    return region
+end
+```
+
+### Relocation Application → `apply_relocations` function
+
+```math
+apply\_relocations: DynamicLinker \times List(RelocationEntry) \to DynamicLinker
+```
+
+**Mathematical operations**: Address computation and patch application
+
+```math
+relocate(entry) = \begin{cases}
+target\_addr + symbol\_addr & \text{if R\_X86\_64\_64} \\
+symbol\_addr - current\_addr & \text{if R\_X86\_64\_PC32} \\
+symbol\_addr + addend & \text{if R\_X86\_64\_RELA}
+\end{cases}
+```
+
+**Direct code correspondence**:
+```julia
+# Mathematical model: apply_relocations: DynamicLinker × List(RelocationEntry) → DynamicLinker
+function apply_relocations(linker::DynamicLinker, relocations::Vector{RelocationEntry})::DynamicLinker
+    for reloc in relocations                       # ↔ relocation iteration
+        symbol = resolve_symbol_reference(reloc.symbol_index)  # ↔ symbol lookup
+        target_address = reloc.offset + section_base_address   # ↔ target calculation
+        
+        # Mathematical case analysis for relocation types
+        relocated_value = if reloc.type == R_X86_64_64
+            symbol.address + reloc.addend           # ↔ absolute addressing
+        elseif reloc.type == R_X86_64_PC32
+            symbol.address - target_address         # ↔ relative addressing  
+        else
+            error("Unsupported relocation type")
+        end
+        
+        patch_memory(target_address, relocated_value)  # ↔ memory patching
+    end
+    return linker
+end
+```
+
+## Complexity Analysis
+
+```math
+\begin{align}
+T_{symbol\_resolution}(n,m) &= O(n \cdot m) \quad \text{– Symbol lookup in object tables} \\
+T_{memory\_allocation}(k) &= O(k \log k) \quad \text{– Sorted region management} \\
+T_{relocation}(r) &= O(r) \quad \text{– Linear relocation processing} \\
+T_{total\_linking}(n,m,r) &= O(n \cdot m + r + k \log k) \quad \text{– Combined operations}
+\end{align}
+```
+
+**Critical path**: Symbol resolution with O(n·m) complexity for cross-object lookups.
+
+## Transformation Pipeline
+
+```math
+objects \xrightarrow{load} linker\_state \xrightarrow{resolve} resolved\_symbols \xrightarrow{relocate} executable\_image
+```
+
+**Code pipeline correspondence**:
+```julia
+# Mathematical pipeline: objects → linker_state → resolved_symbols → executable
+function link_to_executable(object_files::Vector{String}, output_name::String)::Bool
+    linker = DynamicLinker()                       # ↔ state initialization
+    
+    # Load phase: objects → linker_state  
+    for file in object_files
+        elf = parse_elf_file(file)                 # ↔ object parsing
+        load_object(linker, elf)                   # ↔ state accumulation
+    end
+    
+    # Resolve phase: linker_state → resolved_symbols
+    resolve_symbols(linker)                        # ↔ symbol resolution
+    
+    # Relocate phase: resolved_symbols → executable
+    apply_all_relocations(linker)                  # ↔ address patching
+    
+    # Generate phase: executable → file
+    write_elf_executable(linker, output_name)      # ↔ binary generation
+end
+```
+
+## Set-Theoretic Operations
+
+**Symbol collection**:
+```math
+global\_symbols = \bigcup_{obj \in objects} symbols(obj)
+```
+
+**Undefined symbol filtering**:
+```math
+undefined = \{s \in global\_symbols : \neg defined(s)\}
+```
+
+**Memory region union**:
+```math
+total\_memory = \bigcup_{region \in memory\_regions} [region.base, region.base + region.size)
+```
+
+## Invariant Preservation
+
+```math
+\text{Symbol uniqueness: }
+\forall s_1, s_2 \in global\_symbols: s_1.name = s_2.name \implies s_1.address = s_2.address
+```
+
+```math
+\text{Memory safety: }
+\forall m_1, m_2 \in memory\_regions: m_1 \neq m_2 \implies disjoint(m_1, m_2)
+```
+
+```math
+\text{Relocation correctness: }
+\forall r \in relocations: applied(r) \implies valid\_target\_address(r)
+```
+
+## Optimization Trigger Points
+
+- **Inner loops**: Symbol resolution with O(n·m) nested iteration
+- **Memory allocation**: Region sorting and search optimization opportunities
+- **Bottleneck operations**: Cross-object symbol lookup with hash table potential
+- **Invariant preservation**: Memory overlap checking with spatial data structures

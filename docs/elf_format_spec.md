@@ -1,157 +1,157 @@
-# ELF Format Specification
+# ELF Format Mathematical Specification
 
-## Mathematical Foundation
+## Mathematical Model
 
-**Module:** `elf_format.jl`
+```math
+\text{Domain: } \mathcal{D} = \{\text{Binary file data}, \text{Memory byte sequences}\}
+\text{Range: } \mathcal{R} = \{\text{Structured ELF representations}\}
+\text{Mapping: } parse_{elf}: \mathcal{D} \to \mathcal{R}
+```
 
-**Purpose:** Mathematical representation of ELF (Executable and Linkable Format) file structures
+## Operations
 
-**Domain:** 
-$$\mathcal{D} = \{\text{Binary file data}\} \cup \{\text{Memory byte sequences}\}$$
+```math
+\text{Primary operations: } \{parse\_header, extract\_sections, decode\_symbols\}
+\text{Invariants: } \{magic\_valid, structure\_aligned, size\_consistent\}
+\text{Complexity bounds: } O(n) \text{ where } n = \text{file size}
+```
 
-**Codomain:** 
-$$\mathcal{R} = \{\text{Structured ELF representations}\}$$
+## Implementation Correspondence
 
-## Data Structure Specifications
+### ELF Header Structure → `ElfHeader` struct
 
-### ELF Header Structure
+```math
+H = \langle magic, class, data, version, type, machine, entry, phoff, shoff \rangle
+```
 
-**Structure:** `ElfHeader`
+**Code mapping**:
+```julia
+struct ElfHeader
+    magic::NTuple{4, UInt8}     # ↔ magic verification
+    class::UInt8                # ↔ architecture detection  
+    data::UInt8                 # ↔ endianness handling
+    # ... direct field correspondence
+end
+```
 
-**Mathematical Model:** 
-$$H = \langle m, c, d, v, o, a, p, t, \text{mach}, v', e, \text{ph}, \text{sh}, f, \text{eh}, \text{phe}, \text{phn}, \text{she}, \text{shn}, \text{shs} \rangle$$
-
-**Fields Definition:**
-$$\begin{align}
-m &: \{0x7f, 0x45, 0x4c, 0x46\} && \text{Magic number (invariant)} \\
-c &: \{1, 2\} && \text{Class (32/64-bit)} \\
-d &: \{1, 2\} && \text{Data encoding (little/big endian)} \\
-v &: \mathbb{N} && \text{ELF version} \\
-t &: \{1, 2, 3, 4\} && \text{Object file type} \\
-e &: \mathbb{N}_{64} && \text{Entry point address}
-\end{align}$$
-
-**Invariants:** 
-$$\mathcal{I} = \left\{
-\begin{aligned}
-&m = (0x7f, 0x45, 0x4c, 0x46) \\
-&c \in \{1, 2\} \\
-&d \in \{1, 2\}
-\end{aligned}
-\right\}$$
-
-### Section Header Structure
-
-**Structure:** `SectionHeader`
-
-**Mathematical Model:** 
-$$S = \langle n, t, f, a, o, s, l, i, \text{al}, \text{es} \rangle$$
-
-**Type Constraints:**
-$$\begin{align}
-t &\in \{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11\} &&\text{Section types} \\
-f &\in 2^{\{0, 1, 2, 3, 4, 5, 6, 7\}} &&\text{Section flags (bit set)} \\
-a &\in \mathbb{N}_{64} &&\text{Virtual address} \\
-s &\in \mathbb{N}_{64} &&\text{Section size}
-\end{align}$$
-
-**Invariants:** 
-$$\mathcal{I}_S = \left\{
-\begin{aligned}
-&s \geq 0 \\
-&\text{al} \in 2^{\mathbb{N}} \\
-&t = \text{NOBITS} \implies o = 0
-\end{aligned}
-\right\}$$
-
-## Function Specifications
+**Invariants**:
+```math
+\text{Pre: } magic = (0x7f, 0x45, 0x4c, 0x46) \quad 
+\text{Post: } valid\_elf\_header(H) \quad 
+\text{Invariant: } class \in \{1, 2\} \land data \in \{1, 2\}
+```
 
 ### Symbol Table Operations
 
-**Function:** `st_bind(info)`
+**Mathematical operation**: $extract\_binding: \mathbb{Z}_{256} \to \{0,1,2,10,11,12,13\}$
 
-**Signature:** 
-$$f_{\text{bind}}: \mathbb{Z}_{256} \to \{0, 1, 2, 10, 11, 12, 13\}$$
+```math
+extract\_binding(info) = \lfloor info / 16 \rfloor \land 0xF
+```
 
-**Definition:** 
-$$f_{\text{bind}}(x) = \left\lfloor \frac{x}{16} \right\rfloor \land 0xF$$
+**Direct code correspondence**:
+```julia
+# Mathematical model: extract_binding: ℤ₂₅₆ → {0,1,2,10,11,12,13}
+function st_bind(info::UInt8)::UInt8
+    # Implementation of: ⌊info/16⌋ ∧ 0xF
+    return (info >> 4) & 0xf
+end
+```
 
-**Precondition:** 
-$$x \in [0, 255]$$
+**Mathematical operation**: $extract\_type: \mathbb{Z}_{256} \to \{0,1,2,3,4\}$
 
-**Postcondition:** 
-$$f_{\text{bind}}(x) \in \{\text{STB\_LOCAL}, \text{STB\_GLOBAL}, \text{STB\_WEAK}, \ldots\}$$
+```math
+extract\_type(info) = info \land 0xF
+```
 
----
+**Direct code correspondence**:
+```julia
+# Mathematical model: extract_type: ℤ₂₅₆ → {0,1,2,3,4}  
+function st_type(info::UInt8)::UInt8
+    # Implementation of: info ∧ 0xF
+    return info & 0xf
+end
+```
 
-**Function:** `st_type(info)`
+### Relocation Processing
 
-**Signature:** 
-$$f_{\text{type}}: \mathbb{Z}_{256} \to \{0, 1, 2, 3, 4\}$$
+**Mathematical operation**: $extract\_symbol: \mathbb{N}_{64} \to \mathbb{N}_{32}$
 
-**Definition:** 
-$$f_{\text{type}}(x) = x \land 0xF$$
+```math
+extract\_symbol(rel\_info) = \lfloor rel\_info / 2^{32} \rfloor
+```
 
-**Precondition:** 
-$$x \in [0, 255]$$
+**Direct code correspondence**:
+```julia
+# Mathematical model: extract_symbol: ℕ₆₄ → ℕ₃₂
+function elf64_r_sym(info::UInt64)::UInt32
+    # Implementation of: ⌊info/2³²⌋
+    return UInt32(info >> 32)
+end
+```
 
-**Postcondition:** 
-$$f_{\text{type}}(x) \in \{\text{STT\_NOTYPE}, \text{STT\_OBJECT}, \text{STT\_FUNC}, \ldots\}$$
+## Complexity Analysis
 
-### Relocation Operations
+```math
+\begin{align}
+T_{header}(n) &= O(1) \quad \text{– Fixed size read} \\
+T_{sections}(n) &= O(k) \quad \text{where } k = \text{section count} \\
+T_{symbols}(n) &= O(m) \quad \text{where } m = \text{symbol count} \\
+S_{total}(n) &= O(n) \quad \text{– Linear in file size}
+\end{align}
+```
 
-**Function:** `elf64_r_sym(info)`
+**Critical path**: Sequential file parsing with no random access optimizations.
 
-**Signature:** 
-$$f_{\text{sym}}: \mathbb{N}_{64} \to \mathbb{N}_{32}$$
+## Transformation Pipeline
 
-**Definition:** 
-$$f_{\text{sym}}(x) = \left\lfloor \frac{x}{2^{32}} \right\rfloor$$
+```math
+binary\_data \xrightarrow{parse\_header} header \xrightarrow{parse\_sections} sections \xrightarrow{extract\_symbols} symbol\_table
+```
 
-**Mathematical Property:** 
-$$f_{\text{sym}}\left(f_{\text{info}}(s, t)\right) = s$$
+**Code pipeline correspondence**:
+```julia
+# Mathematical pipeline: binary_data → header → sections → symbols
+function parse_elf_complete(io::IO)::ElfFile
+    header = parse_elf_header(io)      # ↔ parse_header
+    sections = parse_sections(io, header)  # ↔ parse_sections  
+    symbols = extract_symbols(sections)    # ↔ extract_symbols
+    return ElfFile(header, sections, symbols)
+end
+```
 
-## Mathematical Properties
+## Set-Theoretic Operations
 
-### Complexity Analysis
+**Section filtering**:
+```math
+\text{Filter: } \{s \in sections : s.type = SHT\_SYMTAB\}
+```
 
-**Structure Access:** 
-$$\mathcal{O}(1) \text{ — Direct field access}$$
+**Symbol extraction**:
+```math
+\text{Map: } \{parse\_symbol(s) : s \in symbol\_sections\}
+```
 
-**Symbol Extraction:** 
-$$\mathcal{O}(1) \text{ — Bitwise operations}$$
+**Validation**:
+```math
+\text{Reduce: } \bigwedge_{s \in sections} valid\_section(s)
+```
 
-**Memory Footprint:**
-$$\begin{align}
-|\texttt{ElfHeader}| &= 64 \text{ bytes} \\
-|\texttt{SectionHeader}| &= 64 \text{ bytes} \\
-|\texttt{SymbolTableEntry}| &= 24 \text{ bytes}
-\end{align}$$
+## Invariant Preservation
 
-### Correctness Properties
+```math
+\text{File structure invariant: } 
+\forall h \in ElfHeader: serialize(parse(h)) = h
+```
 
-**Bidirectional Symbol Info:**
-$$\forall s, t \in \mathbb{Z}: f_{\text{info}}\left(f_{\text{bind}}\left(f_{\text{info}}(s,t)\right), f_{\text{type}}\left(f_{\text{info}}(s,t)\right)\right) = f_{\text{info}}(s,t)$$
+```math
+\text{Symbol consistency: }
+\forall sym: extract\_type(extract\_info(sym.bind, sym.type)) = sym.type
+```
 
-**Relocation Decomposition:**
-$$\forall x \in \mathbb{N}_{64}: f_{\text{info}}\left(f_{\text{sym}}(x), f_{\text{type}}(x)\right) \text{ reconstructs } x \text{ modulo platform constraints}$$
+## Optimization Trigger Points
 
-**Structure Invariant Preservation:**
-$$\forall H \in \texttt{ElfHeader}: \text{parse}\left(\text{serialize}(H)\right) = H$$
-
-### Dependencies
-
-**Mathematical Dependencies:**
-$$\begin{align}
-\text{Constants} &\implies \text{Type constraints} \\
-\text{Bit manipulation} &\implies \text{Platform word size} \\
-\text{Memory layout} &\implies \text{Architecture alignment}
-\end{align}$$
-
-### Verification Conditions
-
-**Type Safety:** All field access operations preserve type constraints
-
-**Memory Safety:** No buffer overflows in structure operations
-
-**Semantic Consistency:** ELF specification compliance maintained
+- **Inner loops**: Symbol table iteration with O(n) complexity bounds
+- **Memory allocation**: Section data loading with size validation  
+- **Bottleneck operations**: String table parsing with linear scan
+- **Invariant preservation**: Magic number validation on every parse

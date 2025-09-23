@@ -1,237 +1,218 @@
-# ELF Writer Specification
-
-## Mathematical Foundation
-
-**Module:** `elf_writer.jl`
-
-**Purpose:** Mathematical serialization operations from structured ELF data to binary executable format
-
-**Domain:** 
-$$\mathcal{D} = \{\text{Linked objects}\} \times \{\text{Memory layouts}\} \times \{\text{Symbol tables}\}$$
-
-**Codomain:** 
-$$\mathcal{R} = \{\text{Binary ELF files}\} \cup \{\text{IO streams}\}$$
-
-## Data Structure Specifications
-
-### Executable Layout Model
-
-**Structure:** `ExecutableLayout`
-
-**Mathematical Model:** $E = \langle h, ph, sh, data \rangle$
-
-**Layout Components:**
-$$\begin{align}
-h &: \texttt{ElfHeader} && \text{File header} \\
-ph &: \text{List}(\texttt{ProgramHeader}) && \text{Program headers} \\
-sh &: \text{List}(\texttt{SectionHeader}) && \text{Section headers} \\
-data &: \text{Map}(\text{Offset}, \text{Bytes}) && \text{File content mapping}
-\end{align}$$
-
-**Invariants:** $\mathcal{I}_E = \{
-  |ph| = h.\text{phnum}, \quad
-  |sh| = h.\text{shnum}, \quad
-  \forall p \in ph: p.\text{offset} + p.\text{filesz} \leq \text{file\_size}
-\}$
-
-### Binary Layout Constraints
-
-**File Structure Ordering:**
-$$\begin{align}
-\text{ELF Header} &: [0, 64) \\
-\text{Program Headers} &: [h.\text{phoff}, h.\text{phoff} + h.\text{phnum} \times h.\text{phentsize}) \\
-\text{Section Content} &: \bigcup_{s \in \text{sections}} [s.\text{offset}, s.\text{offset} + s.\text{size}) \\
-\text{Section Headers} &: [h.\text{shoff}, h.\text{shoff} + h.\text{shnum} \times h.\text{shentsize})
-\end{align}$$
-
-**Alignment Constraints:**
-$$\begin{align}
-\forall p \in \text{ProgramHeaders}: &\quad p.\text{vaddr} \bmod p.\text{align} = 0 \\
-\forall s \in \text{SectionHeaders}: &\quad s.\text{offset} \bmod s.\text{addralign} = 0
-\end{align}$$
-
-## Function Specifications
-
-### Header Writing
-
-**Function:** `write_elf_header(io, header)`
-
-**Signature:** $f_{write\_header}: \text{IO} \times \texttt{ElfHeader} \to \text{IO}$
-
-**Precondition:** io is writable, header is valid
-
-**Postcondition:** 64 bytes written to io, io position advanced
-
-**Algorithm:**
-$$\begin{align}
-&\textbf{Input:} \text{IO } io, \texttt{ElfHeader} \text{ } h \\
-&\textbf{Step 1:} \text{Write magic bytes } (0x7f, 0x45, 0x4c, 0x46) \\
-&\textbf{Step 2:} \text{Write identification fields sequentially} \\
-&\textbf{Step 3:} \text{Write header fields in little-endian format} \\
-&\textbf{Output:} \text{Updated IO stream}
-\end{align}$$
-
-### Program Header Generation
-
-**Function:** `create_program_headers(memory_regions)`
-
-**Signature:** $f_{prog\_headers}: \text{List}(\texttt{MemoryRegion}) \to \text{List}(\texttt{ProgramHeader})$
-
-**Precondition:** Memory regions are non-overlapping and valid
-
-**Postcondition:** Each loadable region has corresponding program header
-
-**Algorithm:**
-$$\begin{align}
-&\textbf{For each region } r \in \text{memory\_regions}: \\
-&\quad \text{Create } ph = \texttt{ProgramHeader}( \\
-&\quad\quad \text{type} = \text{PT\_LOAD}, \\
-&\quad\quad \text{flags} = \text{permissions}(r), \\
-&\quad\quad \text{offset} = \text{file\_offset}(r), \\
-&\quad\quad \text{vaddr} = r.\text{base\_address}, \\
-&\quad\quad \text{paddr} = r.\text{base\_address}, \\
-&\quad\quad \text{filesz} = |r.\text{data}|, \\
-&\quad\quad \text{memsz} = r.\text{size}, \\
-&\quad\quad \text{align} = \text{PAGE\_SIZE} \\
-&\quad )
-\end{align}$$
-
-### Section Header Creation
-
-**Function:** `create_section_headers(sections, string_table)`
-
-**Signature:** $f_{sect\_headers}: \text{List}(\text{Section}) \times \text{StringTable} \to \text{List}(\texttt{SectionHeader})$
-
-**Precondition:** All section names in string table
-
-**Postcondition:** Complete section header table
-
-**Algorithm:**
-$$\begin{align}
-&\text{Create null section header at index 0} \\
-&\textbf{For each section } s: \\
-&\quad \text{name\_offset} \leftarrow \text{string\_table\_offset}(s.\text{name}) \\
-&\quad \text{Create section header with computed offsets} \\
-&\text{Add string table section header} \\
-&\text{Add symbol table section header if present}
-\end{align}$$
-
-### Executable File Generation
-
-**Function:** `write_elf_executable(linker, filename, entry_point)`
-
-**Signature:** $f_{executable}: \texttt{DynamicLinker} \times \text{String} \times \mathbb{N}_{64} \to \{\text{true}, \text{false}\}$
-
-**Precondition:** Linker state is fully resolved
-
-**Postcondition:** Valid executable ELF file created
-
-**Algorithm:**
-$$\begin{align}
-&\textbf{Step 1:} \text{Calculate file layout and offsets} \\
-&\textbf{Step 2:} \text{Create ELF header with entry point} \\
-&\textbf{Step 3:} \text{Generate program headers for loadable segments} \\
-&\textbf{Step 4:} \text{Write headers and content sequentially} \\
-&\textbf{Step 5:} \text{Set executable permissions on output file}
-\end{align}$$
-
-### Layout Computation
-
-**Function:** `compute_file_layout(memory_regions)`
-
-**Signature:** $f_{layout}: \text{List}(\texttt{MemoryRegion}) \to \text{FileLayout}$
-
-**Precondition:** Memory regions represent complete program
-
-**Postcondition:** Non-overlapping file offsets assigned
-
-**Algorithm:**
-$$\begin{align}
-&\text{current\_offset} \leftarrow 64 \quad \text{(after ELF header)} \\
-&\text{Compute program header table size and offset} \\
-&\textbf{For each memory region } r: \\
-&\quad \text{Align current\_offset to page boundary} \\
-&\quad r.\text{file\_offset} \leftarrow \text{current\_offset} \\
-&\quad \text{current\_offset} \leftarrow \text{current\_offset} + |r.\text{data}| \\
-&\text{Compute section header table offset}
-\end{align}$$
-
-## Mathematical Properties
-
-### Complexity Analysis
-
-**Header Writing:** 
-$$\mathcal{O}(1) \text{ — Fixed size operations}$$
-
-**Program Header Generation:** 
-$$\mathcal{O}(n) \text{ where } n = \text{memory regions}$$
-
-**Layout Computation:** 
-$$\mathcal{O}(n \cdot \log(n)) \text{ with sorting}$$
-
-**File Writing:** 
-$$\mathcal{O}(s) \text{ where } s = \text{total file size}$$
-
-**Complete Generation:** 
-$$\mathcal{O}(n \cdot \log(n) + s)$$
-
-### Correctness Properties
-
-**Format Compliance:**
-Generated files conform to ELF specification
-
-**Layout Consistency:**
-$$\begin{align}
-&\forall p \in \text{ProgramHeaders}: p.\text{offset} + p.\text{filesz} \leq \text{file\_size} \\
-&\forall s \in \text{SectionHeaders}: s.\text{offset} + s.\text{size} \leq \text{file\_size}
-\end{align}$$
-
-**Address Space Mapping:**
-$$\forall p \in \text{ProgramHeaders}: \text{file\_content}[p.\text{offset}:p.\text{offset}+p.\text{filesz}] \mapsto \text{memory}[p.\text{vaddr}:p.\text{vaddr}+p.\text{memsz}]$$
-
-**Executability:**
-Generated executable has valid entry point and loadable segments
-
-### Binary Format Constraints
-
-**ELF Header Validity:**
-$$\begin{align}
-h.\text{magic} &= (0x7f, 0x45, 0x4c, 0x46) \\
-h.\text{class} &= 2 \quad \text{(64-bit)} \\
-h.\text{data} &= 1 \quad \text{(little-endian)} \\
-h.\text{type} &= 2 \quad \text{(ET\_EXEC)}
-\end{align}$$
-
-**Program Header Constraints:**
-$$\begin{align}
-\forall p \in \text{LoadableSegments}: &\quad p.\text{type} = \text{PT\_LOAD} \\
-&\quad p.\text{vaddr} \geq 0x400000 \quad \text{(typical base)} \\
-&\quad p.\text{align} = 0x1000 \quad \text{(page size)}
-\end{align}$$
-
-### Verification Conditions
-
-**File Structure Integrity:** All offsets and sizes are consistent
-
-**Memory Layout Validity:** Virtual addresses don't conflict
-
-**Permission Consistency:** Segment permissions match section requirements
-
-**Symbol Resolution:** All required symbols have valid addresses
-
-## Dependencies
-
-**Module Dependencies:**
-$$\begin{align}
-\text{elf\_format.jl} &\implies \text{Structure definitions} \\
-\text{dynamic\_linker.jl} &\implies \text{Linked object state} \\
-\text{IO operations} &\implies \text{File system interface}
-\end{align}$$
-
-**Mathematical Dependencies:**
-$$\begin{align}
-\text{Binary serialization} &\implies \text{Endianness handling} \\
-\text{Memory layout} &\implies \text{Address space management} \\
-\text{File format} &\implies \text{ELF specification compliance} \\
-\text{Executable generation} &\implies \text{Operating system loader compatibility}
-\end{align}$$
+# ELF Writer Mathematical Specification
+
+## Mathematical Model
+
+```math
+\text{Domain: } \mathcal{D} = \{\text{Linked objects}, \text{Memory layouts}, \text{Symbol tables}\}
+\text{Range: } \mathcal{R} = \{\text{Binary ELF files}, \text{IO streams}\}
+\text{Mapping: } serialize: \mathcal{D} \to \mathcal{R}
+```
+
+## Operations
+
+```math
+\text{Primary operations: } \{write\_header, create\_program\_headers, layout\_sections, serialize\_data\}
+\text{Invariants: } \{offset\_alignment, size\_consistency, format\_compliance\}
+\text{Complexity bounds: } O(n \log n + s) \text{ where } n,s = \text{sections, total file size}
+```
+
+## Implementation Correspondence
+
+### Header Writing → `write_elf_header` function
+
+```math
+write\_header: IO \times ElfHeader \to IO
+```
+
+**Direct code correspondence**:
+```julia
+# Mathematical model: write_header: IO × ElfHeader → IO
+function write_elf_header(io::IO, header::ElfHeader)::Nothing
+    # Implementation of: sequential field serialization
+    write(io, header.magic)           # ↔ magic number serialization
+    write(io, header.class)           # ↔ architecture specification
+    write(io, header.data)            # ↔ endianness specification
+    # ... direct field-by-field correspondence
+    write(io, header.entry)           # ↔ entry point address
+    write(io, header.phoff)           # ↔ program header offset
+    write(io, header.shoff)           # ↔ section header offset
+end
+```
+
+### Program Header Generation → `create_program_headers` function
+
+```math
+create\_program\_headers: List(MemoryRegion) \to List(ProgramHeader)
+```
+
+**Mathematical mapping**: Memory regions to loadable segments
+
+```math
+\forall r \in memory\_regions: create\_segment(r) = \langle PT\_LOAD, r.base, r.size, r.permissions \rangle
+```
+
+**Direct code correspondence**:
+```julia
+# Mathematical model: create_program_headers: List(MemoryRegion) → List(ProgramHeader)
+function create_program_headers(memory_regions::Vector{MemoryRegion})::Vector{ProgramHeader}
+    # Implementation of: ∀r ∈ regions: create_loadable_segment(r)
+    headers = Vector{ProgramHeader}()
+    for region in memory_regions                  # ↔ region iteration
+        header = ProgramHeader(
+            PT_LOAD,                              # ↔ loadable segment type
+            region.permissions,                   # ↔ permission mapping
+            region.file_offset,                   # ↔ file position
+            region.base_address,                  # ↔ virtual address
+            region.base_address,                  # ↔ physical address
+            length(region.data),                  # ↔ file size
+            region.size,                          # ↔ memory size
+            PAGE_SIZE                             # ↔ alignment constraint
+        )
+        push!(headers, header)                    # ↔ header accumulation
+    end
+    return headers
+end
+```
+
+### File Layout Computation → `compute_file_layout` function
+
+```math
+compute\_layout: List(MemoryRegion) \to FileLayout
+```
+
+**Mathematical constraint**: Non-overlapping file offsets with alignment
+
+```math
+\forall i < j: offset_i + size_i \leq offset_j \land offset_i \bmod alignment_i = 0
+```
+
+**Direct code correspondence**:
+```julia
+# Mathematical model: compute_layout: List(MemoryRegion) → FileLayout
+function compute_file_layout(regions::Vector{MemoryRegion})::FileLayout
+    # Implementation of: sequential offset assignment with alignment
+    current_offset = 64                           # ↔ header size constant
+    current_offset += length(regions) * 56       # ↔ program header table size
+    
+    for region in regions                         # ↔ region iteration
+        # Alignment constraint: offset mod PAGE_SIZE = 0
+        aligned_offset = align_to_page(current_offset)  # ↔ alignment operation
+        region.file_offset = aligned_offset       # ↔ offset assignment
+        current_offset = aligned_offset + length(region.data)  # ↔ advancement
+    end
+    
+    return FileLayout(current_offset, regions)    # ↔ layout structure
+end
+```
+
+### Binary Serialization → `write_elf_executable` function
+
+```math
+write\_executable: DynamicLinker \times String \times Address \to Boolean
+```
+
+**Transformation pipeline**:
+```math
+linker\_state \xrightarrow{compute\_layout} file\_layout \xrightarrow{create\_headers} elf\_structure \xrightarrow{serialize} binary\_file
+```
+
+**Direct code correspondence**:
+```julia
+# Mathematical model: write_executable: DynamicLinker × String × Address → Boolean
+function write_elf_executable(linker::DynamicLinker, filename::String, entry_point::UInt64)::Bool
+    try
+        open(filename, "w") do io
+            # Pipeline: linker_state → file_layout
+            layout = compute_file_layout(linker.memory_regions)    # ↔ layout computation
+            
+            # Pipeline: file_layout → elf_structure  
+            header = create_elf_header(entry_point, layout)        # ↔ header creation
+            prog_headers = create_program_headers(linker.memory_regions)  # ↔ program headers
+            
+            # Pipeline: elf_structure → binary_file
+            write_elf_header(io, header)                           # ↔ header serialization
+            write_program_headers(io, prog_headers)                # ↔ program header serialization
+            write_section_data(io, linker.memory_regions)          # ↔ data serialization
+        end
+        return true
+    catch e
+        return false                              # ↔ error handling
+    end
+end
+```
+
+## Complexity Analysis
+
+```math
+\begin{align}
+T_{header\_writing}(1) &= O(1) \quad \text{– Fixed header size} \\
+T_{layout\_computation}(n) &= O(n \log n) \quad \text{– Sorting for optimization} \\
+T_{data\_serialization}(s) &= O(s) \quad \text{– Linear in total data size} \\
+T_{total\_generation}(n,s) &= O(n \log n + s) \quad \text{– Combined operations}
+\end{align}
+```
+
+**Critical path**: Data serialization with O(s) linear write operations.
+
+## Transformation Pipeline
+
+```math
+memory\_regions \xrightarrow{compute\_layout} file\_offsets \xrightarrow{create\_headers} elf\_headers \xrightarrow{serialize} binary\_output
+```
+
+**Code pipeline correspondence**:
+```julia
+# Mathematical pipeline: memory_regions → file_offsets → elf_headers → binary_output
+function generate_executable_pipeline(linker::DynamicLinker, filename::String)::Bool
+    # Stage 1: memory_regions → file_offsets
+    layout = compute_file_layout(linker.memory_regions)         # ↔ offset computation
+    
+    # Stage 2: file_offsets → elf_headers  
+    elf_header = create_elf_header(layout)                      # ↔ header construction
+    program_headers = create_program_headers(linker.memory_regions)  # ↔ segment descriptors
+    
+    # Stage 3: elf_headers → binary_output
+    return serialize_to_file(filename, elf_header, program_headers, linker.memory_regions)
+end
+```
+
+## Set-Theoretic Operations
+
+**Loadable section filtering**:
+```math
+loadable\_sections = \{s \in sections : s.flags \land SHF\_ALLOC \neq 0\}
+```
+
+**Address space union**:
+```math
+virtual\_memory = \bigcup_{region \in memory\_regions} [region.base, region.base + region.size)
+```
+
+**File space mapping**:
+```math
+file\_mapping = \{(region.file\_offset, region.data) : region \in memory\_regions\}
+```
+
+## Invariant Preservation
+
+```math
+\text{Format compliance: }
+\forall h \in generated\_headers: valid\_elf\_header(h)
+```
+
+```math
+\text{Layout consistency: }
+\forall p \in program\_headers: p.offset + p.filesz \leq file\_size
+```
+
+```math
+\text{Address mapping: }
+\forall region: file\_content[region.file\_offset:region.file\_offset+|region.data|] \mapsto memory[region.base:region.base+region.size]
+```
+
+## Optimization Trigger Points
+
+- **Inner loops**: Memory region iteration with potential parallelization
+- **Memory allocation**: File buffer pre-allocation based on computed layout size
+- **Bottleneck operations**: Large data block serialization with buffered I/O
+- **Invariant preservation**: Alignment constraint checking with bitwise operations

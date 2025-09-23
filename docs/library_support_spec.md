@@ -1,262 +1,256 @@
-# Library Support Specification
-
-## Mathematical Foundation
-
-**Module:** `library_support.jl`
-
-**Purpose:** Mathematical operations for system library detection, symbol resolution, and dynamic linking
-
-**Domain:** 
-$$\mathcal{D} = \{\text{Library paths}\} \times \{\text{Symbol names}\} \times \{\text{Library types}\}$$
-
-**Codomain:** 
-$$\mathcal{R} = \{\text{Library info}\} \cup \{\text{Symbol mappings}\} \cup \{\text{Resolution results}\}$$
-
-## Data Structure Specifications
-
-### Library Type Classification
-
-**Enumeration:** `LibraryType`
-
-**Mathematical Model:** 
-$$T \in \{\text{GLIBC}, \text{MUSL}, \text{UNKNOWN}\}$$
-
-**Type Properties:**
-$$\begin{align}
-\text{GLIBC} &\implies \text{GNU C Library implementation} \\
-\text{MUSL} &\implies \text{musl libc implementation} \\
-\text{UNKNOWN} &\implies \text{Unrecognized or unsupported library}
-\end{align}$$
-
-**Classification Function:**
-$$f_{\text{classify}}: \text{BinaryContent} \to T$$
-
-### Library Information Model
-
-**Structure:** `LibraryInfo`
-
-**Mathematical Model:** $L = \langle t, p, v, S \rangle$
-
-**Components:**
-$$\begin{align}
-t &: \texttt{LibraryType} && \text{Library implementation type} \\
-p &: \text{String} && \text{File system path} \\
-v &: \text{String} && \text{Version information} \\
-S &: \text{Set}(\text{String}) && \text{Available symbols}
-\end{align}$$
-
-**Invariants:** $\mathcal{I}_L = \{
-  t \neq \text{UNKNOWN} \implies |S| > 0, \quad
-  \text{isfile}(p) = \text{true}, \quad
-  |v| > 0
-\}$
-
-### Symbol Resolution Mapping
-
-**Symbol Resolution:**
-$$\begin{align}
-\text{SymbolMap} &: \text{String} \to \text{Address} \cup \{\bot\} \\
-\text{where } \bot &\text{ represents unresolved symbol}
-\end{align}$$
-
-**Resolution Quality:**
-$$\begin{align}
-\text{Strong resolution} &: \text{sym} \mapsto \text{addr} \text{ (definitive)} \\
-\text{Weak resolution} &: \text{sym} \mapsto \text{addr} \text{ (fallback)} \\
-\text{No resolution} &: \text{sym} \mapsto \bot
-\end{align}$$
-
-## Function Specifications
-
-### Library Type Detection
-
-**Function:** `detect_libc_type(library_path)`
-
-**Signature:** $f_{detect}: \text{String} \to \texttt{LibraryType}$
-
-**Precondition:** library_path is valid file path
-
-**Postcondition:** Returns most specific library type identifiable
-
-**Algorithm:**
-$$\begin{align}
-&\textbf{Input:} \text{String } path \\
-&\textbf{Step 1:} \text{Read binary content or extract strings} \\
-&\textbf{Step 2:} \text{Search for identification patterns:} \\
-&\quad\quad \text{If "GLIBC" or "GNU C Library" found} \to \text{GLIBC} \\
-&\quad\quad \text{If "musl" or "MUSL" found} \to \text{MUSL} \\
-&\quad\quad \text{Otherwise} \to \text{UNKNOWN} \\
-&\textbf{Output:} \texttt{LibraryType}
-\end{align}$$
-
-### System Library Discovery
-
-**Function:** `find_system_libraries()`
-
-**Signature:** $f_{find}: \{\} \to \text{List}(\texttt{LibraryInfo})$
-
-**Precondition:** System has standard library paths
-
-**Postcondition:** All discoverable system libraries identified
-
-**Algorithm:**
-$$\begin{align}
-&\text{standard\_paths} \leftarrow [\text{"/lib64"}, \text{"/usr/lib"}, \text{"/usr/lib64"}] \\
-&\textbf{For each } path \in \text{standard\_paths}: \\
-&\quad \textbf{For each } file \in \text{readdir}(path): \\
-&\quad\quad \text{If } \text{match}(file, \text{libc\_pattern}): \\
-&\quad\quad\quad \text{Detect type and extract info} \\
-&\text{Return collected library information}
-\end{align}$$
-
-### Symbol Resolution
-
-**Function:** `resolve_unresolved_symbols!(linker, libraries)`
-
-**Signature:** $f_{resolve}: \texttt{DynamicLinker} \times \text{List}(\texttt{LibraryInfo}) \to \texttt{DynamicLinker}$
-
-**Precondition:** Linker has unresolved symbols, libraries are valid
-
-**Postcondition:** Maximum number of symbols resolved from available libraries
-
-**Algorithm:**
-$$\begin{align}
-&\text{unresolved} \leftarrow \text{get\_unresolved\_symbols}(linker) \\
-&\textbf{For each } sym \in \text{unresolved}: \\
-&\quad \textbf{For each } lib \in \text{libraries}: \\
-&\quad\quad \text{If } sym.\text{name} \in lib.\text{symbols}: \\
-&\quad\quad\quad \text{Create resolved symbol with library address} \\
-&\quad\quad\quad \text{Add to linker symbol table} \\
-&\quad\quad\quad \text{Break (first match wins)}
-\end{align}$$
-
-### Common Symbol Extraction
-
-**Function:** `get_common_libc_symbols()`
-
-**Signature:** $f_{common}: \{\} \to \text{Set}(\text{String})$
-
-**Precondition:** None
-
-**Postcondition:** Set of standard C library symbols
-
-**Algorithm:**
-$$\begin{align}
-&\text{Return predefined set:} \\
-&\{\text{"printf"}, \text{"malloc"}, \text{"free"}, \text{"strlen"}, \\
-&\quad \text{"strcpy"}, \text{"strcmp"}, \text{"memcpy"}, \text{"exit"}, \\
-&\quad \text{"open"}, \text{"close"}, \text{"read"}, \text{"write"}, \ldots\}
-\end{align}$$
-
-### Version Extraction
-
-**Function:** `extract_library_version(library_path)`
-
-**Signature:** $f_{version}: \text{String} \to \text{String}$
-
-**Precondition:** Valid library file path
-
-**Postcondition:** Version string or "unknown"
-
-**Algorithm:**
-$$\begin{align}
-&\text{filename} \leftarrow \text{basename}(library\_path) \\
-&\text{Match against pattern } /\.so\.(\d+(?:\.\d+)*)/: \\
-&\quad \text{If match found: return version string} \\
-&\quad \text{Otherwise: return "unknown"}
-\end{align}$$
-
-### Library Path Search
-
-**Function:** `search_library_paths(name_pattern)`
-
-**Signature:** $f_{search}: \text{Regex} \to \text{List}(\text{String})$
-
-**Precondition:** Valid regex pattern
-
-**Postcondition:** All matching library files found
-
-**Algorithm:**
-$$\begin{align}
-&\text{search\_paths} \leftarrow \text{get\_standard\_paths}() \\
-&\text{matches} \leftarrow [] \\
-&\textbf{For each } path \in \text{search\_paths}: \\
-&\quad \textbf{For each } file \in \text{readdir}(path): \\
-&\quad\quad \text{If } \text{match}(file, name\_pattern): \\
-&\quad\quad\quad \text{matches.append}(\text{joinpath}(path, file)) \\
-&\text{Return matches}
-\end{align}$$
-
-## Mathematical Properties
-
-### Complexity Analysis
-
-**Library Detection:** $\mathcal{O}(f)$ where $f = \text{file size for string search}$
-
-**System Discovery:** $\mathcal{O}(n \cdot f)$ where $n = \text{files in system paths}$
-
-**Symbol Resolution:** $\mathcal{O}(s \cdot l)$ where $s = \text{unresolved symbols}$, $l = \text{libraries}$
-
-**Version Extraction:** $\mathcal{O}(|\text{filename}|)$ - Regex matching
-
-**Complete Resolution:** $\mathcal{O}(n \cdot f + s \cdot l)$
-
-### Correctness Properties
-
-**Detection Accuracy:**
-$$\forall lib \in \text{SystemLibraries}: f_{detect}(lib) \text{ correctly identifies type}$$
-
-**Symbol Completeness:**
-$$\text{Common symbols} \subseteq \bigcup_{lib \in \text{detected}} lib.\text{symbols}$$
-
-**Resolution Soundness:**
-$$\forall sym \in \text{resolved}: \exists lib: sym.\text{name} \in lib.\text{symbols}$$
-
-**Version Consistency:**
-$$\text{extracted\_version}(lib) \text{ matches actual library version}$$
-
-### Library Classification Properties
-
-**Mutual Exclusivity:**
-$$\forall lib: f_{detect}(lib) \in \{\text{GLIBC}, \text{MUSL}, \text{UNKNOWN}\} \text{ (exactly one)}$$
-
-**Detection Stability:**
-$$f_{detect}(lib_1) = f_{detect}(lib_2) \text{ if } lib_1 \text{ and } lib_2 \text{ are same implementation}$$
-
-**Symbol Availability:**
-$$\text{type}(lib) \neq \text{UNKNOWN} \implies |lib.\text{symbols}| \geq |\text{common\_symbols}|$$
-
-### Resolution Quality Metrics
-
-**Resolution Rate:**
-$$\rho = \frac{|\text{resolved\_symbols}|}{|\text{total\_unresolved\_symbols}|}$$
-
-**Library Coverage:**
-$$\gamma = \frac{|\text{libraries\_with\_matches}|}{|\text{total\_libraries}|}$$
-
-**Symbol Match Quality:**
-$$\forall sym \in \text{resolved}: \text{quality}(sym) \in \{\text{exact}, \text{compatible}, \text{fallback}\}$$
-
-## Dependencies
-
-**Module Dependencies:**
-$$\begin{align}
-\text{dynamic\_linker.jl} &\implies \text{Symbol table operations} \\
-\text{elf\_format.jl} &\implies \text{Symbol structure definitions} \\
-\text{File system} &\implies \text{Library discovery operations}
-\end{align}$$
-
-**Mathematical Dependencies:**
-$$\begin{align}
-\text{String matching} &\implies \text{Pattern recognition algorithms} \\
-\text{Set operations} &\implies \text{Symbol table management} \\
-\text{Graph theory} &\implies \text{Dependency resolution} \\
-\text{Classification theory} &\implies \text{Library type detection}
-\end{align}$$
-
-**System Dependencies:**
-$$\begin{align}
-\text{Operating system} &\implies \text{Standard library paths} \\
-\text{C library presence} &\implies \text{Symbol availability} \\
-\text{File permissions} &\implies \text{Library accessibility}
-\end{align}$$
+# Library Support Mathematical Specification
+
+## Mathematical Model
+
+```math
+\text{Domain: } \mathcal{D} = \{\text{Library paths}, \text{Symbol names}, \text{Library types}\}
+\text{Range: } \mathcal{R} = \{\text{Library info}, \text{Symbol mappings}, \text{Resolution results}\}
+\text{Mapping: } detect\_and\_resolve: \mathcal{D} \to \mathcal{R}
+```
+
+## Operations
+
+```math
+\text{Primary operations: } \{detect\_libc\_type, find\_libraries, resolve\_symbols, extract\_version\}
+\text{Invariants: } \{library\_valid, symbol\_available, path\_accessible\}
+\text{Complexity bounds: } O(f + s \cdot l) \text{ where } f,s,l = \text{file size, symbols, libraries}
+```
+
+## Implementation Correspondence
+
+### Library Type Detection → `detect_libc_type` function
+
+```math
+detect\_type: String \to LibraryType
+```
+
+**Mathematical classification**:
+```math
+classify(library\_content) = \begin{cases}
+GLIBC & \text{if } "GLIBC" \in content \lor "GNU C Library" \in content \\
+MUSL & \text{if } "musl" \in content \lor "MUSL" \in content \\
+UNKNOWN & \text{otherwise}
+\end{cases}
+```
+
+**Direct code correspondence**:
+```julia
+# Mathematical model: detect_type: String → LibraryType
+function detect_libc_type(library_path::String)::LibraryType
+    # Implementation of: pattern matching classification
+    if !isfile(library_path)
+        return UNKNOWN                            # ↔ file existence check
+    end
+    
+    try
+        # Extract string content: content = strings(binary_file)
+        result = read(`strings $library_path`, String)  # ↔ string extraction
+        
+        # Classification: classify(content) based on pattern matching
+        if occursin("GLIBC", result) || occursin("GNU C Library", result)
+            return GLIBC                          # ↔ GNU library detection
+        elseif occursin("musl", result) || occursin("MUSL", result)  
+            return MUSL                           # ↔ musl library detection
+        end
+    catch e
+        # Fallback: manual binary analysis
+        return classify_by_binary_analysis(library_path)  # ↔ binary inspection
+    end
+    
+    return UNKNOWN                                # ↔ default classification
+end
+```
+
+### System Library Discovery → `find_system_libraries` function
+
+```math
+find\_libraries: \{\} \to List(LibraryInfo)
+```
+
+**Set-theoretic operation**: Search paths traversal and filtering
+
+```math
+library\_search = \bigcup_{path \in search\_paths} \{f \in files(path) : matches\_libc\_pattern(f)\}
+```
+
+**Direct code correspondence**:
+```julia
+# Mathematical model: find_libraries: {} → List(LibraryInfo)
+function find_system_libraries()::Vector{LibraryInfo}
+    # Implementation of: ⋃_{path ∈ search_paths} {f ∈ files(path) : matches_pattern(f)}
+    search_paths = ["/lib64", "/usr/lib", "/usr/lib64"]  # ↔ standard path set
+    libraries = LibraryInfo[]                     # ↔ result accumulator
+    
+    for path in search_paths                      # ↔ path iteration
+        if !isdir(path)
+            continue                              # ↔ path validation
+        end
+        
+        # Filter operation: {f ∈ files(path) : matches_libc_pattern(f)}
+        for file in readdir(path)                 # ↔ directory traversal
+            if matches_libc_pattern(file)         # ↔ pattern matching
+                full_path = joinpath(path, file)  # ↔ path construction
+                lib_type = detect_libc_type(full_path)  # ↔ type classification
+                version = extract_library_version(full_path)  # ↔ version extraction
+                symbols = get_common_libc_symbols()  # ↔ symbol set
+                
+                library = LibraryInfo(lib_type, full_path, version, symbols)
+                push!(libraries, library)         # ↔ result accumulation
+            end
+        end
+    end
+    return libraries
+end
+```
+
+### Symbol Resolution → `resolve_unresolved_symbols!` function
+
+```math
+resolve\_symbols: DynamicLinker \times List(LibraryInfo) \to DynamicLinker
+```
+
+**Mathematical operation**: Symbol lookup with priority resolution
+
+```math
+lookup(symbol\_name, libraries) = \begin{cases}
+lib.address & \text{if } \exists lib: symbol\_name \in lib.symbols \\
+unresolved & \text{if } \forall lib: symbol\_name \notin lib.symbols
+\end{cases}
+```
+
+**Direct code correspondence**:
+```julia
+# Mathematical model: resolve_symbols: DynamicLinker × List(LibraryInfo) → DynamicLinker
+function resolve_unresolved_symbols!(linker::DynamicLinker, libraries::Vector{LibraryInfo})::DynamicLinker
+    # Implementation of: symbol lookup with first-match priority
+    unresolved = get_unresolved_symbols(linker)   # ↔ unresolved symbol extraction
+    
+    for symbol in unresolved                      # ↔ symbol iteration
+        for library in libraries                  # ↔ library search
+            # Lookup operation: symbol.name ∈ library.symbols
+            if symbol.name in library.symbols     # ↔ membership test
+                # Resolution: assign default library address
+                symbol.address = 0x0              # ↔ placeholder address
+                symbol.resolved = true            # ↔ resolution marking
+                symbol.source = library.path      # ↔ source tracking
+                break                             # ↔ first-match priority
+            end
+        end
+    end
+    return linker
+end
+```
+
+### Common Symbol Extraction → `get_common_libc_symbols` function
+
+```math
+common\_symbols: \{\} \to Set(String)
+```
+
+**Set definition**: Standard C library function names
+
+```math
+libc\_symbols = \{printf, malloc, free, strlen, strcpy, memcpy, exit, \ldots\}
+```
+
+**Direct code correspondence**:
+```julia
+# Mathematical model: common_symbols: {} → Set(String)
+function get_common_libc_symbols()::Set{String}
+    # Implementation of: predefined standard library symbol set
+    return Set{String}([
+        # I/O functions: {printf, sprintf, fprintf, ...}
+        "printf", "sprintf", "fprintf", "snprintf",
+        
+        # Memory functions: {malloc, free, calloc, realloc}  
+        "malloc", "free", "calloc", "realloc",
+        
+        # String functions: {strlen, strcpy, strcmp, ...}
+        "strlen", "strcpy", "strcmp", "strcat",
+        "memcpy", "memset", "memcmp", "memmove",
+        
+        # System functions: {exit, open, close, ...}
+        "exit", "_exit", "abort",
+        "open", "close", "read", "write",
+        "getpid", "getuid", "getgid"
+    ])
+end
+```
+
+## Complexity Analysis
+
+```math
+\begin{align}
+T_{library\_detection}(f) &= O(f) \quad \text{– File scanning for patterns} \\
+T_{system\_discovery}(n,f) &= O(n \cdot f) \quad \text{– Directory traversal with file analysis} \\
+T_{symbol\_resolution}(s,l) &= O(s \cdot l) \quad \text{– Symbol lookup across libraries} \\
+T_{total\_resolution}(n,f,s,l) &= O(n \cdot f + s \cdot l) \quad \text{– Combined operations}
+\end{align}
+```
+
+**Critical path**: Symbol resolution with O(s·l) nested lookup operations.
+
+## Transformation Pipeline
+
+```math
+library\_paths \xrightarrow{scan} library\_files \xrightarrow{classify} typed\_libraries \xrightarrow{resolve} symbol\_mappings
+```
+
+**Code pipeline correspondence**:
+```julia
+# Mathematical pipeline: paths → files → libraries → symbols
+function complete_library_resolution_pipeline(linker::DynamicLinker)::DynamicLinker
+    # Stage 1: library_paths → library_files
+    libraries = find_system_libraries()           # ↔ discovery phase
+    
+    # Stage 2: library_files → typed_libraries (implicit in find_system_libraries)
+    # Each library is classified during discovery
+    
+    # Stage 3: typed_libraries → symbol_mappings
+    resolve_unresolved_symbols!(linker, libraries)  # ↔ resolution phase
+    
+    return linker
+end
+```
+
+## Set-Theoretic Operations
+
+**Library path union**:
+```math
+all\_search\_paths = \bigcup_{standard} search\_paths \cup \{additional\_paths\}
+```
+
+**Symbol availability**:
+```math
+available\_symbols = \bigcup_{lib \in libraries} lib.symbols
+```
+
+**Resolution status filtering**:
+```math
+resolved\_symbols = \{s \in symbols : s.resolved = true\}
+unresolved\_symbols = \{s \in symbols : s.resolved = false\}
+```
+
+## Invariant Preservation
+
+```math
+\text{Library type consistency: }
+\forall lib: classify(lib) \in \{GLIBC, MUSL, UNKNOWN\}
+```
+
+```math
+\text{Symbol availability: }
+\forall lib: lib.type \neq UNKNOWN \implies |lib.symbols| > 0
+```
+
+```math
+\text{Resolution correctness: }
+\forall sym \in resolved: \exists lib: sym.name \in lib.symbols
+```
+
+## Optimization Trigger Points
+
+- **Inner loops**: Directory traversal with potential parallel scanning
+- **Memory allocation**: Symbol set pre-allocation based on library type
+- **Bottleneck operations**: String pattern matching with compiled regex optimization
+- **Invariant preservation**: File existence checking with cached results

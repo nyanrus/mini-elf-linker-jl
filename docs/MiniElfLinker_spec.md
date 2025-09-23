@@ -1,243 +1,214 @@
-# Mini ELF Linker Module Specification
+# MiniElfLinker Mathematical Specification
+
+## Mathematical Model
+
+```math
+\text{Domain: } \mathcal{D} = \{\text{Module exports}, \text{Component integration}\}
+\text{Range: } \mathcal{R} = \{\text{Unified linker interface}, \text{Public API}\}
+\text{Mapping: } compose: \mathcal{D} \to \mathcal{R}
+```
+
+## Operations
+
+```math
+\text{Primary operations: } \{parse\_elf\_file, link\_to\_executable, resolve\_symbols, write\_executable\}
+\text{Invariants: } \{module\_consistency, export\_completeness, dependency\_satisfaction\}
+\text{Complexity bounds: } O(\text{parse} + \text{link} + \text{write})
+```
+
+## Implementation Correspondence
+
+### Module Composition → Main module structure
+
+```math
+compose\_modules: List(Module) \to UnifiedInterface
+```
+
+**Mathematical composition**: Function pipeline assembly
+
+```math
+full\_pipeline = serialize \circ link \circ parse
+```
+
+**Direct code correspondence**:
+```julia
+# Mathematical model: compose_modules: List(Module) → UnifiedInterface
+module MiniElfLinker
+
+# Component inclusion: ⋃_{mod ∈ modules} exports(mod)
+include("elf_format.jl")         # ↔ data structure definitions
+include("elf_parser.jl")         # ↔ parsing operations  
+include("dynamic_linker.jl")     # ↔ linking operations
+include("elf_writer.jl")         # ↔ serialization operations
+include("library_support.jl")   # ↔ library resolution
+
+# Export interface: interface = {f₁, f₂, ..., fₙ}
+export parse_elf_file           # ↔ parse function
+export link_to_executable       # ↔ link function  
+export write_elf_executable     # ↔ write function
+export resolve_symbols          # ↔ resolve function
+export print_symbol_table       # ↔ utility function
+export print_memory_layout      # ↔ utility function
+
+end  # module
+```
+
+### Function Pipeline → High-level operations
+
+```math
+complete\_linking: List(String) \times String \to Boolean
+```
+
+**Mathematical pipeline**: Complete ELF processing workflow
+
+```math
+object\_files \xrightarrow{parse\_all} elf\_objects \xrightarrow{link} executable\_state \xrightarrow{serialize} binary\_file
+```
+
+**Direct code correspondence**:
+```julia
+# Mathematical model: complete_linking: List(String) × String → Boolean
+function link_to_executable(object_files::Vector{String}, output_name::String)::Bool
+    # Implementation of: object_files → elf_objects → executable_state → binary_file
+    try
+        linker = DynamicLinker()                  # ↔ state initialization
+        
+        # Parse phase: object_files → elf_objects
+        for file in object_files                  # ↔ file iteration
+            elf = parse_elf_file(file)            # ↔ parse operation
+            load_object(linker, elf)              # ↔ state accumulation
+        end
+        
+        # Link phase: elf_objects → executable_state
+        resolve_symbols(linker)                   # ↔ symbol resolution
+        apply_relocations(linker)                 # ↔ address patching
+        
+        # Serialize phase: executable_state → binary_file
+        entry_point = find_entry_point(linker)   # ↔ entry point lookup
+        return write_elf_executable(linker, output_name, entry_point)  # ↔ serialization
+        
+    catch e
+        return false                              # ↔ error handling
+    end
+end
+```
+
+### Export Interface → Public API definition
+
+```math
+public\_interface = \{f : f \in module\_functions \land exported(f)\}
+```
+
+**Set-theoretic operation**: Function export filtering
 
-## Mathematical Foundation
+```math
+exported\_functions = \{parse\_elf\_file, link\_to\_executable, write\_elf\_executable, \ldots\}
+```
 
-**Module:** `MiniElfLinker.jl`
+**Direct code correspondence**:
+```julia
+# Mathematical model: public_interface = {f : f ∈ module_functions ∧ exported(f)}
 
-**Purpose:** Mathematical composition and orchestration of ELF linking operations
+# Core parsing interface: parse_elf_file: String → ElfFile
+# Implementation corresponds to: file_path ↦ structured_representation
+export parse_elf_file
 
-**Domain:** 
-$$\mathcal{D} = \{\text{Module exports}\} \times \{\text{Component integration}\}$$
+# High-level linking interface: link_to_executable: List(String) × String → Boolean  
+# Implementation corresponds to: (object_files, output) ↦ success_status
+export link_to_executable
 
-**Codomain:** 
-$$\mathcal{R} = \{\text{Unified linker interface}\} \cup \{\text{Public API}\}$$
+# Low-level writing interface: write_elf_executable: DynamicLinker × String × Address → Boolean
+# Implementation corresponds to: (linker_state, file, entry) ↦ serialization_result
+export write_elf_executable
 
-## Data Structure Specifications
+# Utility interfaces for debugging and analysis
+export print_symbol_table       # ↔ symbol table display
+export print_memory_layout      # ↔ memory layout visualization
+```
 
-### Module Export Structure
+## Complexity Analysis
 
-**Structure:** `ModuleExports`
+```math
+\begin{align}
+T_{module\_loading}(1) &= O(1) \quad \text{– Static compilation time} \\
+T_{export\_resolution}(n) &= O(n) \quad \text{– Linear in export count} \\
+T_{complete\_pipeline}(f,s,r) &= O(f + s \cdot l + r) \quad \text{– File processing pipeline} \\
+T_{total\_operation} &= O(\text{max}(T_{parse}, T_{link}, T_{write})) \quad \text{– Pipeline stages}
+\end{align}
+```
 
-**Mathematical Model:** 
-$$E = \langle T, F, C \rangle$$
+**Critical path**: Symbol resolution phase with O(s·l) complexity dominates.
 
-**Export Categories:**
-$$\begin{align}
-T &\in \text{Set}(\text{Type definitions}) &&\text{Data structures} \\
-F &\in \text{Set}(\text{Function signatures}) &&\text{Operations} \\
-C &\in \text{Set}(\text{Constants}) &&\text{Configuration values}
-\end{align}$$
+## Transformation Pipeline
 
-**Export Classification:**
-$$\begin{align}
-T &= \{\texttt{ElfHeader}, \texttt{SectionHeader}, \texttt{SymbolTableEntry}, \\
-&\quad \texttt{RelocationEntry}, \texttt{ElfFile}, \texttt{ProgramHeader}, \\
-&\quad \texttt{DynamicLinker}, \texttt{LibraryType}, \texttt{LibraryInfo}\} \\
-F &= F_{parse} \cup F_{link} \cup F_{write} \cup F_{library} \\
-C &= \{\texttt{GLIBC}, \texttt{MUSL}, \texttt{UNKNOWN}\}
-\end{align}$$
+```math
+source\_files \xrightarrow{include} module\_namespace \xrightarrow{export} public\_interface \xrightarrow{use} client\_code
+```
 
-### Function Set Decomposition
+**Code pipeline correspondence**:
+```julia
+# Mathematical pipeline: source_files → module_namespace → public_interface → client_code
 
-**Parser Functions:** $F_{parse} = \{
-  \texttt{parse\_elf\_header}, \texttt{parse\_section\_headers}, 
-  \texttt{parse\_symbol\_table}, \texttt{parse\_elf\_file}
-\}$
+# Stage 1: source_files → module_namespace (compile time)
+# All source files are included and compiled into unified namespace
 
-**Linker Functions:** $F_{link} = \{
-  \texttt{link\_objects}, \texttt{link\_to\_executable}, \texttt{resolve\_symbols}, 
-  \texttt{load\_object}, \texttt{print\_symbol\_table}, \texttt{print\_memory\_layout}
-\}$
+# Stage 2: module_namespace → public_interface (export phase)  
+# Selected functions are exposed through export declarations
 
-**Writer Functions:** $F_{write} = \{
-  \texttt{write\_elf\_executable}
-\}$
+# Stage 3: public_interface → client_code (runtime)
+# Client code accesses exported functionality:
+using MiniElfLinker
 
-**Library Functions:** $F_{library} = \{
-  \texttt{find\_system\_libraries}, \texttt{resolve\_unresolved\_symbols!}, \texttt{detect\_libc\_type}
-\}$
+# Direct usage of exported mathematical operations:
+success = link_to_executable(["main.o", "lib.o"], "executable")  # ↔ complete_linking
+elf_data = parse_elf_file("object.o")                            # ↔ parse operation
+```
 
-### Module Dependency Graph
+## Set-Theoretic Operations
 
-**Dependency Relation:** $\prec \subseteq \text{Modules} \times \text{Modules}$
+**Module composition**:
+```math
+total\_namespace = \bigcup_{module \in components} functions(module)
+```
 
-**Dependency Structure:**
-$$\begin{align}
-\texttt{elf\_format.jl} &\prec \texttt{elf\_parser.jl} \\
-\texttt{elf\_format.jl} &\prec \texttt{dynamic\_linker.jl} \\
-\texttt{elf\_format.jl} &\prec \texttt{elf\_writer.jl} \\
-\texttt{elf\_format.jl} &\prec \texttt{library\_support.jl} \\
-\texttt{elf\_parser.jl} &\prec \texttt{dynamic\_linker.jl} \\
-\texttt{dynamic\_linker.jl} &\prec \texttt{elf\_writer.jl} \\
-\texttt{library\_support.jl} &\prec \texttt{dynamic\_linker.jl}
-\end{align}$$
+**Export filtering**:
+```math
+public\_functions = \{f \in total\_namespace : marked\_for\_export(f)\}
+```
 
-**Dependency Properties:**
-$$\begin{align}
-&\text{Acyclic: } \nexists \text{ cycle in } \prec \\
-&\text{Minimal: } \prec \text{ is transitive reduction} \\
-&\text{Well-founded: } \exists \text{ topological ordering}
-\end{align}$$
+**Dependency resolution**:
+```math
+required\_modules = \{m : \exists f \in public\_functions: depends(f, m)\}
+```
 
-## Function Specifications
+## Invariant Preservation
 
-### Module Initialization
+```math
+\text{Export completeness: }
+\forall op \in required\_operations: \exists f \in exports: implements(f, op)
+```
 
-**Function:** `module MiniElfLinker ... end`
+```math
+\text{Dependency satisfaction: }
+\forall f \in exports: \forall dep \in dependencies(f): satisfied(dep)
+```
 
-**Signature:** $f_{module}: \{\} \to \text{ModuleNamespace}$
+```math
+\text{Interface consistency: }
+\forall f \in exports: signature(f) = documented\_signature(f)
+```
 
-**Precondition:** All included files are syntactically valid
+## Function Composition Properties
 
-**Postcondition:** All exports are available in global namespace
+**Associativity**: $(serialize \circ link) \circ parse = serialize \circ (link \circ parse)$
 
-**Algorithm:**
-$$\begin{align}
-&\textbf{Step 1:} \text{Include dependencies in dependency order} \\
-&\textbf{Step 2:} \text{Export public interface functions and types} \\
-&\textbf{Step 3:} \text{Establish module namespace} \\
-&\textbf{Output:} \text{Initialized module with public API}
-\end{align}$$
+**Pipeline correctness**: $successful(parse(file)) \implies valid\_input(link(\cdot))$
 
-### Export Function Composition
+**Error propagation**: $error(stage_i) \implies error(pipeline)$
 
-**Function Composition Chains:**
+## Optimization Trigger Points
 
-**Parsing Chain:**
-$$f_{complete\_parse} = f_{parse\_elf\_file} \circ f_{parse\_symbol\_table} \circ f_{parse\_section\_headers} \circ f_{parse\_elf\_header}$$
-
-**Linking Chain:**
-$$f_{complete\_link} = f_{resolve\_symbols} \circ f_{load\_object}^* \circ f_{create\_linker}$$
-
-**Generation Chain:**
-$$f_{complete\_generate} = f_{write\_elf\_executable} \circ f_{apply\_relocations} \circ f_{resolve\_symbols}$$
-
-**Full Pipeline:**
-$$f_{pipeline} = f_{complete\_generate} \circ f_{complete\_link} \circ f_{complete\_parse}$$
-
-### Interface Consistency
-
-**Type Consistency:**
-$$\begin{align}
-&\forall f \in F: \text{input\_types}(f) \subseteq T \cup \text{PrimitiveTypes} \\
-&\forall f \in F: \text{output\_types}(f) \subseteq T \cup \text{PrimitiveTypes} \cup \{\text{Error}\}
-\end{align}$$
-
-**Function Signatures Verification:**
-$$\begin{align}
-&\texttt{parse\_elf\_header}: \text{IO} \to \texttt{ElfHeader} \\
-&\texttt{link\_to\_executable}: \text{List}(\text{String}) \times \text{String} \to \text{Bool} \\
-&\texttt{write\_elf\_executable}: \texttt{DynamicLinker} \times \text{String} \times \mathbb{N}_{64} \to \text{Bool}
-\end{align}$$
-
-## Mathematical Properties
-
-### Module Composition Properties
-
-**Functional Composition Associativity:**
-$$(f \circ g) \circ h = f \circ (g \circ h) \text{ for compatible functions}$$
-
-**Pipeline Correctness:**
-$$\text{parse}(file) = \text{success} \implies \text{link}(\text{parse}(file)) \text{ is well-defined}$$
-
-**Export Completeness:**
-$$\forall \text{ public operation } op: \exists f \in F: f \text{ implements } op$$
-
-**Type Safety:**
-All exported functions preserve type invariants
-
-### Complexity Analysis
-
-**Module Loading:** $\mathcal{O}(1)$ - Static compilation
-
-**Export Resolution:** $\mathcal{O}(|F| + |T|)$ - Linear in exports
-
-**Dependency Loading:** $\mathcal{O}(d)$ where $d = \text{dependency depth}$
-
-**Complete Pipeline:** $\mathcal{O}(\text{parse} + \text{link} + \text{write})$
-
-### Interface Stability
-
-**Backward Compatibility:**
-API changes preserve existing function signatures
-
-**Forward Compatibility:**
-New exports extend rather than modify existing interface
-
-**Semantic Versioning:**
-$$\begin{align}
-\text{Major version change} &\implies \text{Breaking API changes} \\
-\text{Minor version change} &\implies \text{New functionality added} \\
-\text{Patch version change} &\implies \text{Bug fixes only}
-\end{align}$$
-
-## Export Interface Specification
-
-### Public Types
-
-**Core Data Structures:**
-$$\begin{align}
-\texttt{ElfHeader} &: \text{Binary file header representation} \\
-\texttt{SectionHeader} &: \text{Section metadata} \\
-\texttt{SymbolTableEntry} &: \text{Symbol information} \\
-\texttt{RelocationEntry} &: \text{Relocation data} \\
-\texttt{ElfFile} &: \text{Complete parsed ELF representation} \\
-\texttt{ProgramHeader} &: \text{Executable segment description}
-\end{align}$$
-
-**Linker State:**
-$$\begin{align}
-\texttt{DynamicLinker} &: \text{Linker state machine} \\
-\texttt{LibraryInfo} &: \text{System library metadata} \\
-\texttt{LibraryType} &: \text{Library classification}
-\end{align}$$
-
-### Public Operations
-
-**High-Level Operations:**
-$$\begin{align}
-\texttt{parse\_elf\_file} &: \text{String} \to \texttt{ElfFile} \\
-\texttt{link\_to\_executable} &: \text{List}(\text{String}) \times \text{String} \to \text{Bool} \\
-\texttt{write\_elf\_executable} &: \texttt{DynamicLinker} \times \text{String} \times \mathbb{N}_{64} \to \text{Bool}
-\end{align}$$
-
-**Utility Operations:**
-$$\begin{align}
-\texttt{print\_symbol\_table} &: \texttt{DynamicLinker} \to \text{IO} \\
-\texttt{print\_memory\_layout} &: \texttt{DynamicLinker} \to \text{IO} \\
-\texttt{find\_system\_libraries} &: \{\} \to \text{List}(\texttt{LibraryInfo})
-\end{align}$$
-
-## Dependencies
-
-**Internal Module Dependencies:**
-$$\begin{align}
-\text{All submodules} &\implies \text{Dependency-ordered inclusion} \\
-\text{Export consistency} &\implies \text{Type and function compatibility} \\
-\text{Namespace management} &\implies \text{No naming conflicts}
-\end{align}$$
-
-**External Dependencies:**
-$$\begin{align}
-\text{Julia Base} &\implies \text{Core language features} \\
-\text{Printf} &\implies \text{Formatted output} \\
-\text{File system} &\implies \text{I/O operations}
-\end{align}$$
-
-**Mathematical Dependencies:**
-$$\begin{align}
-\text{Function composition} &\implies \text{Category theory} \\
-\text{Type systems} &\implies \text{Algebraic data types} \\
-\text{Module systems} &\implies \text{Namespace mathematics} \\
-\text{Pipeline composition} &\implies \text{Monadic operations}
-\end{align}$$
-
-### Verification Conditions
-
-**Module Integrity:** All includes succeed and exports are valid
-
-**Type Consistency:** All exported types are properly defined
-
-**Function Completeness:** All exported functions are implemented
-
-**Dependency Satisfaction:** All required modules are available
+- **Module loading**: Static compilation optimization opportunities
+- **Export resolution**: Symbol table optimization for faster lookup
+- **Pipeline composition**: Lazy evaluation and streaming processing potential
+- **Memory management**: Shared data structures across pipeline stages

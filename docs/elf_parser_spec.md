@@ -1,208 +1,184 @@
-# ELF Parser Specification
+# ELF Parser Mathematical Specification
 
-## Mathematical Foundation
+## Mathematical Model
 
-**Module:** `elf_parser.jl`
+```math
+\text{Domain: } \mathcal{D} = \{\text{IO streams}, \text{File paths}, \text{Binary sequences}\}
+\text{Range: } \mathcal{R} = \{\text{ELF structured data}, \text{Error states}\}
+\text{Mapping: } parse: \mathcal{D} \to \mathcal{R}
+```
 
-**Purpose:** Mathematical parsing operations from binary ELF data to structured representations
+## Operations
 
-**Domain:** 
-$$\mathcal{D} = \{\text{IO streams}\} \cup \{\text{File paths}\} \cup \{\text{Binary data sequences}\}$$
+```math
+\text{Primary operations: } \{parse\_header, parse\_sections, parse\_symbols, parse\_relocations\}
+\text{Invariants: } \{sequential\_parse, offset\_valid, size\_consistent\}
+\text{Complexity bounds: } O(n + m + r) \text{ where } n,m,r = \text{sections, symbols, relocations}
+```
 
-**Codomain:** 
-$$\mathcal{R} = \{\text{ELF structured data}\} \cup \{\text{Error states}\}$$
+## Implementation Correspondence
 
-## Data Structure Specifications
+### Header Parsing → `parse_elf_header` function
 
-### ELF File Structure
+```math
+parse\_header: IO \to ElfHeader \cup \{Error\}
+```
 
-**Structure:** `ElfFile`
+**Direct code correspondence**:
+```julia
+# Mathematical model: parse_header: IO → ElfHeader ∪ {Error}
+function parse_elf_header(io::IO)::ElfHeader
+    # Implementation of: sequential field extraction with validation
+    magic = read_magic(io)          # ↔ magic verification
+    validate_magic(magic)           # ↔ invariant checking
+    return construct_header(io)     # ↔ structure building
+end
+```
 
-**Mathematical Model:** 
-$$F = \langle h, s, \text{sym}, \text{rel}, \text{str} \rangle$$
+**Transformation pipeline**:
+```math
+io \xrightarrow{read\_magic} magic \xrightarrow{validate} verified \xrightarrow{parse\_fields} header
+```
 
-**Components:**
-$$\begin{align}
-h &\in \texttt{ElfHeader} &&\text{File header} \\
-s &\in \text{List}(\texttt{SectionHeader}) &&\text{Section headers} \\
-\text{sym} &\in \text{List}(\texttt{SymbolTableEntry}) &&\text{Symbol table} \\
-\text{rel} &\in \text{List}(\texttt{RelocationEntry}) &&\text{Relocations} \\
-\text{str} &\in \text{List}(\text{String}) &&\text{String tables}
-\end{align}$$
+### Section Parsing → `parse_section_headers` function
 
-**Invariants:** 
-$$\mathcal{I}_F = \left\{
-\begin{aligned}
-&|s| = h.\text{shnum} \\
-&\forall i \in [0, |s|): s[i].\text{type} \in \{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11\}
-\end{aligned}
-\right\}$$
+```math
+parse\_sections: IO \times ElfHeader \to List(SectionHeader)
+```
 
-## Function Specifications
+**Preconditions**:
+```math
+\text{Pre: } header.shoff > 0 \land header.shnum \geq 0 \land io\_valid(io)
+```
 
-### Header Parsing
+**Postconditions**:
+```math
+\text{Post: } |result| = header.shnum \land \forall s \in result: valid\_section(s)
+```
 
-**Function:** `parse_elf_header(io)`
+**Direct code correspondence**:
+```julia
+# Mathematical model: parse_sections: IO × ElfHeader → List(SectionHeader)
+function parse_section_headers(io::IO, header::ElfHeader)::Vector{SectionHeader}
+    # Implementation of: iterate over section table
+    seek(io, header.shoff)                    # ↔ position to offset
+    sections = Vector{SectionHeader}()        # ↔ result accumulator
+    for i in 1:header.shnum                   # ↔ bounded iteration
+        push!(sections, parse_section(io))    # ↔ sequential parsing
+    end
+    return sections
+end
+```
 
-**Signature:** 
-$$f_{\text{header}}: \text{IO} \to \texttt{ElfHeader} \cup \{\text{Error}\}$$
+### Symbol Table Parsing → `parse_symbol_table` function
 
-**Precondition:** 
-$$\text{io points to valid ELF file start}$$
+```math
+parse\_symbols: IO \times SectionHeader \times StringTable \to List(SymbolEntry)
+```
 
-**Postcondition:** 
-$$\text{Valid ElfHeader with magic} = (0x7f, 0x45, 0x4c, 0x46)$$
+**Complexity constraint**:
+```math
+|result| = \frac{section.size}{24} \quad \text{(symbol entry size)}
+```
 
-**Algorithm:**
-$$\begin{align}
-&\textbf{Input:} \quad \text{IO stream } \textit{io} \\
-&\textbf{Step 1:} \quad \text{Read magic bytes } m \leftarrow \text{read}(\textit{io}, 4) \\
-&\textbf{Step 2:} \quad \text{Verify } m = (0x7f, 0x45, 0x4c, 0x46) \\
-&\textbf{Step 3:} \quad \text{Parse remaining header fields sequentially} \\
-&\textbf{Output:} \quad \texttt{ElfHeader}(m, \text{class}, \text{data}, \ldots)
-\end{align}$$
+**Set-theoretic operation**:
+```math
+\text{Filter: } \{s \in sections : s.type = SHT\_SYMTAB\}
+\text{Map: } \{parse\_entry(s) : s \in symbol\_sections\}
+```
 
-### Section Headers Parsing
+**Direct code correspondence**:
+```julia
+# Mathematical model: parse_symbols: IO × SectionHeader × StringTable → List(SymbolEntry)
+function parse_symbol_table(io::IO, section::SectionHeader, strings::StringTable)::Vector{SymbolEntry}
+    # Implementation of: symbol_count = section.size ÷ 24
+    symbol_count = div(section.size, 24)     # ↔ size calculation
+    symbols = Vector{SymbolEntry}()          # ↔ result collection
+    for i in 1:symbol_count                  # ↔ bounded iteration
+        entry = parse_symbol_entry(io)       # ↔ entry parsing
+        entry.name = resolve_string(strings, entry.name_index)  # ↔ name resolution
+        push!(symbols, entry)                # ↔ accumulation
+    end
+    return symbols
+end
+```
 
-**Function:** `parse_section_headers(io, header)`
+## Complexity Analysis
 
-**Signature:** 
-$$f_{\text{sections}}: \text{IO} \times \texttt{ElfHeader} \to \text{List}(\texttt{SectionHeader})$$
+```math
+\begin{align}
+T_{header}(n) &= O(1) \quad \text{– Fixed header size} \\
+T_{sections}(k) &= O(k) \quad \text{– Linear in section count} \\
+T_{symbols}(m) &= O(m) \quad \text{– Linear in symbol count} \\
+T_{strings}(s) &= O(s) \quad \text{– Linear in string table size} \\
+T_{total}(n,m,s) &= O(k + m + s) \quad \text{– Additive complexity}
+\end{align}
+```
 
-**Precondition:** 
-$$\begin{cases}
-\text{header.shoff} > 0 \\
-\text{header.shnum} \geq 0 \\
-\text{io positioned at valid ELF file}
-\end{cases}$$
+**Critical path**: String table parsing with linear scan for null terminators.
 
-**Postcondition:** 
-$$|\text{result}| = \text{header.shnum}$$
+## Transformation Pipeline
 
-**Algorithm:**
-$$\begin{align}
-&\textbf{Input:} \quad \text{IO } \textit{io}, \text{ElfHeader } h \\
-&\textbf{Step 1:} \quad \text{Seek to } h.\text{shoff} \\
-&\textbf{Step 2:} \quad \text{For } i \in [0, h.\text{shnum}): \\
-&\qquad\qquad \text{Parse section header } s_i \\
-&\textbf{Output:} \quad [s_0, s_1, \ldots, s_{h.\text{shnum}-1}]
-\end{align}$$
+```math
+binary\_file \xrightarrow{parse\_header} header \xrightarrow{parse\_sections} sections \xrightarrow{filter\_symbols} symbol\_sections \xrightarrow{parse\_symbols} symbols
+```
 
-### Symbol Table Parsing
+**Code pipeline correspondence**:
+```julia
+# Mathematical pipeline: file → header → sections → symbols
+function parse_elf_file(filename::String)::ElfFile
+    open(filename, "r") do io
+        header = parse_elf_header(io)           # ↔ parse_header
+        sections = parse_section_headers(io, header)  # ↔ parse_sections
+        
+        # Filter operation: {s ∈ sections : s.type = SHT_SYMTAB}
+        symbol_sections = filter(s -> s.type == SHT_SYMTAB, sections)
+        
+        # Map operation: {parse_symbols(s) : s ∈ symbol_sections}
+        symbols = vcat([parse_symbol_table(io, s, strings) for s in symbol_sections]...)
+        
+        return ElfFile(header, sections, symbols)
+    end
+end
+```
 
-**Function:** `parse_symbol_table(io, section_header, string_table)`
+## Set-Theoretic Operations
 
-**Signature:** $f_{symbols}: \text{IO} \times \texttt{SectionHeader} \times \text{StringTable} \to \text{List}(\texttt{SymbolTableEntry})$
+**Section filtering by type**:
+```math
+filter\_by\_type(sections, t) = \{s \in sections : s.type = t\}
+```
 
-**Precondition:** 
-$$\begin{align}
-&\text{section\_header.type} = \text{SHT\_SYMTAB} \\
-&\text{section\_header.size} \bmod 24 = 0 \quad \text{(symbol entry size)}
-\end{align}$$
+**Symbol extraction**:
+```math
+extract\_symbols(sections) = \bigcup_{s \in symbol\_sections} parse\_symbols(s)
+```
 
-**Postcondition:** $|\text{result}| = \text{section\_header.size} / 24$
+**String resolution**:
+```math
+resolve\_names(symbols, strings) = \{s' : s' = s \text{ with } s'.name = strings[s.name\_index]\}
+```
 
-**Algorithm:**
-$$\begin{align}
-&n \leftarrow \text{section\_header.size} / 24 \\
-&\text{For } i \in [0, n): \\
-&\quad\quad \text{Parse symbol entry } sym_i \\
-&\quad\quad \text{Resolve name from string table}
-\end{align}$$
+## Invariant Preservation
 
-### Relocation Parsing
+```math
+\text{Parse completeness: } 
+\forall f \in ValidELFFiles: parse(f) \neq Error
+```
 
-**Function:** `parse_relocations(io, section_header)`
+```math
+\text{Structure consistency: }
+|parse\_sections(io, h)| = h.shnum
+```
 
-**Signature:** $f_{relocations}: \text{IO} \times \texttt{SectionHeader} \to \text{List}(\texttt{RelocationEntry})$
+```math
+\text{String resolution: }
+\forall sym \in symbols: sym.name = strings[sym.name\_index]
+```
 
-**Precondition:** $\text{section\_header.type} \in \{\text{SHT\_REL}, \text{SHT\_RELA}\}$
+## Optimization Trigger Points
 
-**Postcondition:** 
-$$\begin{align}
-&\text{If SHT\_REL: } |\text{result}| = \text{section\_header.size} / 16 \\
-&\text{If SHT\_RELA: } |\text{result}| = \text{section\_header.size} / 24
-\end{align}$$
-
-### String Table Parsing
-
-**Function:** `parse_string_table(io, section_header)`
-
-**Signature:** $f_{strings}: \text{IO} \times \texttt{SectionHeader} \to \text{StringTable}$
-
-**Precondition:** $\text{section\_header.type} = \text{SHT\_STRTAB}$
-
-**Postcondition:** Null-terminated strings extracted
-
-**Algorithm:**
-$$\begin{align}
-&\textbf{Input:} \text{IO } io, \text{SectionHeader } sh \\
-&\textbf{Step 1:} \text{Read } sh.\text{size} \text{ bytes} \\
-&\textbf{Step 2:} \text{Split on null bytes (0x00)} \\
-&\textbf{Output:} \text{Array of strings}
-\end{align}$$
-
-## Mathematical Properties
-
-### Complexity Analysis
-
-**Header Parsing:** 
-$$\mathcal{O}(1) \text{ — Fixed size read}$$
-
-**Section Headers:** 
-$$\mathcal{O}(n) \text{ where } n = \text{header.shnum}$$
-
-**Symbol Table:** 
-$$\mathcal{O}(m) \text{ where } m = \text{number of symbols}$$
-
-**Relocations:** 
-$$\mathcal{O}(r) \text{ where } r = \text{number of relocations}$$
-
-**String Table:** 
-$$\mathcal{O}(s) \text{ where } s = \text{string table size}$$
-
-**Complete File:** 
-$$\mathcal{O}(n + m + r + s)$$
-
-### Correctness Properties
-
-**Parser Completeness:**
-$$\forall f \in \text{ValidELFFiles}: \text{parse\_elf\_file}(f) \text{ succeeds}$$
-
-**Structural Consistency:**
-$$\begin{align}
-&\text{If } h = \text{parse\_elf\_header}(io) \\
-&\text{Then } |\text{parse\_section\_headers}(io, h)| = h.\text{shnum}
-\end{align}$$
-
-**String Resolution:**
-$$\forall sym \in \text{SymbolTable}: \text{sym.name resolved from string table}$$
-
-**Error Handling:**
-$$\text{Invalid magic} \implies \text{Error state}$$
-
-### Verification Conditions
-
-**Type Safety:** All reads respect data type boundaries
-
-**Bounds Safety:** No reads beyond file boundaries
-
-**Format Compliance:** ELF specification adherence
-
-**Memory Safety:** No buffer overflows in parsing operations
-
-## Dependencies
-
-**Module Dependencies:**
-$$\begin{align}
-\text{elf\_format.jl} &\implies \text{Data structure definitions} \\
-\text{IO operations} &\implies \text{Platform file system interface} \\
-\text{String processing} &\implies \text{Text encoding assumptions}
-\end{align}$$
-
-**Mathematical Dependencies:**
-$$\begin{align}
-\text{Parsing correctness} &\implies \text{ELF format specification compliance} \\
-\text{Error propagation} &\implies \text{Monadic composition of operations} \\
-\text{Performance bounds} &\implies \text{Linear parsing algorithms}
-\end{align}$$
+- **Inner loops**: Section iteration with O(k) bounds
+- **Memory allocation**: Symbol array pre-allocation based on section size
+- **Bottleneck operations**: String table linear scanning  
+- **Invariant preservation**: Magic number validation for each file
