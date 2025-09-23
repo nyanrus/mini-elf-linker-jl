@@ -119,8 +119,12 @@ function extract_symbols!(linker::DynamicLinker, elf_file::ElfFile)
             if haskey(linker.global_symbol_table, symbol_name)
                 existing = linker.global_symbol_table[symbol_name]
                 
+                # Defined symbols override undefined symbols
+                if defined && !existing.defined
+                    linker.global_symbol_table[symbol_name] = symbol
+                    println("Symbol '$symbol_name': defined symbol overrides undefined")
                 # Global symbols override weak symbols
-                if binding == STB_GLOBAL && existing.binding == STB_WEAK
+                elseif binding == STB_GLOBAL && existing.binding == STB_WEAK
                     linker.global_symbol_table[symbol_name] = symbol
                     println("Symbol '$symbol_name': global definition overrides weak")
                 elseif binding == STB_WEAK && existing.binding == STB_GLOBAL
@@ -160,13 +164,18 @@ Allocate memory regions for all loaded sections.
 """
 function allocate_memory_regions!(linker::DynamicLinker)
     current_address = linker.next_address
+    section_address_map = Dict{Tuple{String, UInt16}, UInt64}()  # Map (filename, section_index) to address
     
     for elf_file in linker.loaded_objects
-        for section in elf_file.sections
+        for (section_idx, section) in enumerate(elf_file.sections)
             # Only allocate memory for sections that need it
             if section.flags & SHF_ALLOC != 0 && section.size > 0
                 # Align address
                 aligned_addr = align_address(current_address, section.addralign)
+                
+                # Store section address mapping (ELF sections are 0-indexed, but Julia enumerate is 1-indexed)
+                elf_section_index = UInt16(section_idx - 1)
+                section_address_map[(elf_file.filename, elf_section_index)] = aligned_addr
                 
                 # Create memory region
                 region = MemoryRegion(
@@ -188,12 +197,48 @@ function allocate_memory_regions!(linker::DynamicLinker)
                 current_address = aligned_addr + section.size
                 
                 section_name = get_string_from_table(elf_file.string_table, section.name)
-                println("Allocated memory region for section '$section_name' at 0x$(string(aligned_addr, base=16))")
+                println("Allocated memory region for section '$section_name' (index $elf_section_index) at 0x$(string(aligned_addr, base=16))")
             end
         end
     end
     
     linker.next_address = current_address
+    
+    # Update symbol addresses to be absolute
+    update_symbol_addresses!(linker, section_address_map)
+end
+
+"""
+    update_symbol_addresses!(linker::DynamicLinker, section_address_map::Dict)
+
+Update symbol addresses to be absolute after memory allocation.
+"""
+function update_symbol_addresses!(linker::DynamicLinker, section_address_map::Dict{Tuple{String, UInt16}, UInt64})
+    for (symbol_name, symbol) in linker.global_symbol_table
+        if symbol.defined && symbol.section > 0
+            # Find the absolute address of the section
+            section_key = (symbol.source_file, symbol.section)
+            if haskey(section_address_map, section_key)
+                section_base = section_address_map[section_key]
+                new_value = section_base + symbol.value
+                
+                # Create updated symbol
+                updated_symbol = Symbol(
+                    symbol.name,
+                    new_value,
+                    symbol.size,
+                    symbol.binding,
+                    symbol.type,
+                    symbol.section,
+                    symbol.defined,
+                    symbol.source_file
+                )
+                
+                linker.global_symbol_table[symbol_name] = updated_symbol
+                println("Updated symbol '$symbol_name' address: 0x$(string(symbol.value, base=16)) -> 0x$(string(new_value, base=16))")
+            end
+        end
+    end
 end
 
 """
@@ -283,19 +328,72 @@ function perform_relocation!(linker::DynamicLinker, elf_file::ElfFile, relocatio
         error("Invalid symbol index: $sym_index")
     end
     
+    # For this simplified implementation, assume most relocations are in .text section
+    # Find the .text section's memory region
+    text_region = nothing
+    for region in linker.memory_regions
+        # Check if this region likely corresponds to .text (first executable region)
+        if region.permissions & 0x4 != 0  # Executable
+            text_region = region
+            break
+        end
+    end
+    
+    if text_region === nothing
+        println("Warning: Could not find text region for relocation")
+        return
+    end
+    
     # Perform relocation based on type
     if rel_type == R_X86_64_64
         # Direct 64-bit address
-        value = symbol_value + relocation.addend
+        value = Int64(symbol_value) + relocation.addend
+        apply_relocation_to_region!(text_region, relocation.offset, value, 8)
         println("R_X86_64_64 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")
     elseif rel_type == R_X86_64_PC32
         # PC-relative 32-bit
-        # Note: This is simplified - in reality we'd need to patch memory
-        target_addr = relocation.offset  # This would be the actual location in memory
-        value = symbol_value + relocation.addend - target_addr
+        target_addr = text_region.base_address + relocation.offset
+        value = Int64(symbol_value) + relocation.addend - Int64(target_addr)
+        apply_relocation_to_region!(text_region, relocation.offset, value, 4)
         println("R_X86_64_PC32 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")
+    elseif rel_type == R_X86_64_PLT32
+        # PLT 32-bit address (for static linking, treat like PC32)
+        target_addr = text_region.base_address + relocation.offset
+        value = Int64(symbol_value) + relocation.addend - Int64(target_addr)
+        apply_relocation_to_region!(text_region, relocation.offset, value, 4)
+        println("R_X86_64_PLT32 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")
     else
         println("Unsupported relocation type: $rel_type")
+    end
+end
+
+"""
+    apply_relocation_to_region!(region::MemoryRegion, offset::UInt64, value::Int64, size::Int)
+
+Apply a relocation to a memory region by patching the binary data.
+"""
+function apply_relocation_to_region!(region::MemoryRegion, offset::UInt64, value::Int64, size::Int)
+    # offset is relative to the start of the region
+    pos = Int(offset) + 1  # Julia arrays are 1-indexed
+    
+    if pos + size - 1 <= length(region.data)
+        # Apply the relocation based on size
+        if size == 4
+            # 32-bit relocation
+            val_32 = Int32(value)
+            region.data[pos] = UInt8(val_32 & 0xff)
+            region.data[pos+1] = UInt8((val_32 >> 8) & 0xff)
+            region.data[pos+2] = UInt8((val_32 >> 16) & 0xff)
+            region.data[pos+3] = UInt8((val_32 >> 24) & 0xff)
+        elseif size == 8
+            # 64-bit relocation
+            val_64 = UInt64(value)
+            for i in 0:7
+                region.data[pos+i] = UInt8((val_64 >> (i * 8)) & 0xff)
+            end
+        end
+    else
+        println("Warning: Relocation offset 0x$(string(offset, base=16)) exceeds region size")
     end
 end
 
@@ -331,6 +429,42 @@ function link_objects(filenames::Vector{String}; base_address::UInt64 = UInt64(0
     
     println("Linking completed successfully!")
     return linker
+end
+
+"""
+    link_to_executable(filenames::Vector{String}, output_filename::String; 
+                      base_address::UInt64 = 0x400000, entry_symbol::String = "main") -> Bool
+
+Link multiple ELF object files together and output an executable ELF file.
+"""
+function link_to_executable(filenames::Vector{String}, output_filename::String; 
+                           base_address::UInt64 = UInt64(0x400000), 
+                           entry_symbol::String = "main")
+    # Perform normal linking
+    linker = link_objects(filenames; base_address=base_address)
+    
+    # Find entry point
+    entry_point = base_address + 0x1000  # Default entry point
+    if haskey(linker.global_symbol_table, entry_symbol)
+        entry_symbol_info = linker.global_symbol_table[entry_symbol]
+        if entry_symbol_info.defined
+            entry_point = entry_symbol_info.value
+            println("Entry point set to '$entry_symbol' at 0x$(string(entry_point, base=16))")
+        else
+            println("Warning: Entry symbol '$entry_symbol' is not defined, using default entry point")
+        end
+    else
+        println("Warning: Entry symbol '$entry_symbol' not found, using default entry point")
+    end
+    
+    # Write executable
+    try
+        write_elf_executable(linker, output_filename; entry_point=entry_point)
+        return true
+    catch e
+        println("Error writing executable: $e")
+        return false
+    end
 end
 
 """

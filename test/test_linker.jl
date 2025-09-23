@@ -82,6 +82,26 @@ function test_elf_linker()
         return false
     end
     
+    # Test 7: Generate executable
+    print("  ✓ Testing executable generation... ")
+    try
+        output_file = "/tmp/test_linker_executable"
+        success = link_to_executable(["examples/test_program.o"], output_file)
+        @assert success
+        @assert isfile(output_file)
+        
+        # Check if it's recognized as an ELF executable
+        file_output = read(`file $output_file`, String)
+        @assert occursin("ELF", file_output) && occursin("executable", file_output)
+        
+        # Clean up
+        rm(output_file)
+        println("PASSED")
+    catch e
+        println("FAILED: $e")
+        return false
+    end
+    
     println("\n🎉 All tests passed! The Mini ELF Linker is working correctly.")
     return true
 end

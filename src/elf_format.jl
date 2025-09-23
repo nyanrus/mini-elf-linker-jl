@@ -115,6 +115,21 @@ const STT_FUNC = 2     # Symbol is a code object
 const STT_SECTION = 3  # Symbol associated with a section
 const STT_FILE = 4     # Symbol's name is file name
 
+# Program header types
+const PT_NULL = 0           # Unused entry
+const PT_LOAD = 1           # Loadable segment
+const PT_DYNAMIC = 2        # Dynamic linking information
+const PT_INTERP = 3         # Interpreter information
+const PT_NOTE = 4           # Note information
+const PT_SHLIB = 5          # Reserved
+const PT_PHDR = 6           # Program header table
+const PT_TLS = 7            # Thread-local storage
+
+# Program header flags
+const PF_X = 0x1            # Execute
+const PF_W = 0x2            # Write
+const PF_R = 0x4            # Read
+
 # Relocation types for x86-64
 const R_X86_64_NONE = 0     # No relocation
 const R_X86_64_64 = 1       # Direct 64 bit

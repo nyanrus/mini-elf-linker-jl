@@ -67,6 +67,26 @@ print_symbol_table(linked_result)
 print_memory_layout(linked_result)
 ```
 
+### Executable Generation
+
+```julia
+# Generate an executable ELF file from object files
+success = link_to_executable(["main.o"], "my_program")
+
+if success
+    println("Executable 'my_program' generated successfully!")
+    # The executable can now be run (if all symbols are resolved)
+end
+
+# You can also specify entry point and base address
+link_to_executable(
+    ["main.o", "lib.o"], 
+    "my_program",
+    base_address=0x400000,
+    entry_symbol="main"
+)
+```
+
 ## ELF File Structure
 
 The ELF format consists of several key components that this linker handles:
@@ -120,7 +140,11 @@ The ELF format consists of several key components that this linker handles:
 The `examples/` directory contains several demonstration programs:
 
 - `basic_usage.jl`: Fundamental parsing and linking operations
+- `executable_generation.jl`: Complete example of generating executable ELF files
+- `educational_walkthrough.jl`: Step-by-step educational demonstration
+- `analyze_elf.jl`: Advanced ELF analysis tools
 - `test_program.c`: Simple C program for generating test ELF objects
+- `simple_test.c`: Self-contained test program without external dependencies
 
 ### Running Examples
 
@@ -128,9 +152,15 @@ The `examples/` directory contains several demonstration programs:
 # Compile test objects
 cd examples
 gcc -c test_program.c -o test_program.o
+gcc -c simple_test.c -o simple_test.o
 
 # Run examples
 julia basic_usage.jl
+julia executable_generation.jl
+julia educational_walkthrough.jl
+
+# Generate your first executable!
+julia -e "using MiniElfLinker; link_to_executable([\"examples/simple_test.o\"], \"my_first_executable\")"
 ```
 
 ## Educational Value
@@ -183,16 +213,24 @@ This is an educational project. Contributions that improve clarity, add document
 - `SectionHeader`: Section header entry
 - `SymbolTableEntry`: Symbol table entry
 - `RelocationEntry`: Relocation entry with addend
+- `ProgramHeader`: Program header entry (for executables)
 - `DynamicLinker`: Main linker state
 
 ### Main Functions
 
+#### Parsing Functions
 - `parse_elf_header(filename)`: Parse ELF header from file
 - `parse_elf_file(filename)`: Parse complete ELF file
+
+#### Linker Functions  
 - `DynamicLinker(base_address)`: Create new linker instance
 - `load_object(linker, filename)`: Load object file
 - `link_objects(filenames)`: Link multiple object files
+- `link_to_executable(filenames, output; base_address, entry_symbol)`: **Generate executable ELF**
 - `resolve_symbols(linker)`: Resolve symbol references
+
+#### Output Functions
+- `write_elf_executable(linker, filename; entry_point)`: Write executable ELF file
 - `print_symbol_table(linker)`: Display symbol table
 - `print_memory_layout(linker)`: Display memory layout
 
