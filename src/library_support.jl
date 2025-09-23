@@ -24,30 +24,62 @@ end
 """
     detect_library_type(library_path::String) -> LibraryType
 
-Detect the type of library at the given path.
+Detect the type of library at the given path using magic bytes.
 """
 function detect_library_type(library_path::String)
     if !isfile(library_path)
         return UNKNOWN
     end
     
-    filename = basename(library_path)
+    file_type = detect_file_type_by_magic(library_path)
     
-    # Check for static libraries
-    if endswith(filename, ".a")
+    if file_type == AR_FILE
         return STATIC
-    end
-    
-    # Check for shared libraries
-    if occursin(r"\.so(\.\d+)*$", filename)
-        # For .so files, try to determine if it's glibc or musl
-        if occursin(r"libc\.so", filename)
-            return detect_libc_type(library_path)
-        else
-            return SHARED
+    elseif file_type == ELF_FILE
+        # For ELF files, determine if it's glibc/musl or regular shared library
+        elf_header = parse_native_elf_header(library_path)
+        if elf_header !== nothing
+            if elf_header.type == ET_DYN  # Shared object
+                # Check if it's libc specifically
+                filename = basename(library_path)
+                if occursin(r"libc\.so", filename)
+                    return detect_libc_type(library_path)
+                else
+                    return SHARED
+                end
+            elseif elf_header.type == ET_REL  # Relocatable object
+                return SHARED  # Treat relocatable objects as shared for now
+            end
         end
+        return SHARED
+    elseif file_type == LINKER_SCRIPT
+        # Parse linker script to find actual library
+        return parse_linker_script_type(library_path)
     end
     
+    return UNKNOWN
+end
+
+"""
+    parse_linker_script_type(library_path::String) -> LibraryType
+
+Parse a linker script to determine the type of the actual library it references.
+"""
+function parse_linker_script_type(library_path::String)
+    try
+        content = read(library_path, String)
+        # Find referenced files in the linker script
+        for line in split(content, '\n')
+            for m in eachmatch(r"/[^\s)]+\.(?:so\.?[0-9]*|a)", line)
+                if isfile(m.match)
+                    # Recursively check the referenced file
+                    return detect_library_type(m.match)
+                end
+            end
+        end
+    catch e
+        println("Warning: Failed to parse linker script $library_path: $e")
+    end
     return UNKNOWN
 end
 
@@ -399,7 +431,7 @@ end
 """
     extract_library_symbols(library_path::String) -> Set{String}
 
-Extract available symbols from a library dynamically using objdump and nm commands.
+Extract available symbols from a library using native binary parsing.
 """
 function extract_library_symbols(library_path::String)
     symbols = Set{String}()
@@ -408,80 +440,46 @@ function extract_library_symbols(library_path::String)
         return symbols
     end
     
-    # Check if it's a linker script and find real library paths
-    real_library_paths = [library_path]
+    file_type = detect_file_type_by_magic(library_path)
+    
+    if file_type == ELF_FILE
+        # Native ELF parsing
+        symbols = extract_elf_symbols_native(library_path)
+    elseif file_type == AR_FILE
+        # Native archive parsing
+        symbols = extract_archive_symbols_native(library_path)
+    elseif file_type == LINKER_SCRIPT
+        # Parse linker script and extract symbols from referenced files
+        symbols = extract_linker_script_symbols(library_path)
+    else
+        println("Warning: Unknown file type for $library_path")
+    end
+    
+    return symbols
+end
+
+"""
+    extract_linker_script_symbols(library_path::String) -> Set{String}
+
+Extract symbols from libraries referenced in a linker script.
+"""
+function extract_linker_script_symbols(library_path::String)
+    symbols = Set{String}()
+    
     try
         content = read(library_path, String)
-        if occursin("GROUP", content) || occursin("OUTPUT_FORMAT", content)
-            # It's a linker script, extract the real library paths
-            real_library_paths = String[]
-            for line in split(content, '\n')
-                # Look for patterns like: GROUP ( /path/to/real/lib.so.6 )
-                for m in eachmatch(r"/[^\s)]+\.(?:so\.?[0-9]*|a)", line)
-                    if isfile(m.match)
-                        push!(real_library_paths, m.match)
-                    end
+        # Find referenced files in the linker script
+        for line in split(content, '\n')
+            for m in eachmatch(r"/[^\s)]+\.(?:so\.?[0-9]*|a)", line)
+                if isfile(m.match)
+                    # Recursively extract symbols from referenced file
+                    referenced_symbols = extract_library_symbols(m.match)
+                    union!(symbols, referenced_symbols)
                 end
             end
         end
     catch e
-        # If reading fails, assume it's binary and proceed with original path
-    end
-    
-    # Extract symbols from all real library files
-    for real_library_path in real_library_paths
-        try
-            if endswith(real_library_path, ".so") || occursin(r"\.so\.", real_library_path)
-                # For shared libraries, use objdump -T for dynamic symbols
-                result = read(`objdump -T $real_library_path`, String)
-                for line in split(result, '\n')
-                    # objdump -T output format: address flags section size version symbol_name
-                    if occursin(r"^[0-9a-f]+.*DF", line) || occursin(r"^\w.*DF", line)
-                        parts = split(strip(line))
-                        if length(parts) >= 6
-                            symbol_name = parts[end]
-                            # Remove version suffixes like (GLIBC_2.2.5)
-                            clean_symbol = replace(symbol_name, r"\(.*\)" => "")
-                            if !isempty(clean_symbol) && !startswith(clean_symbol, "_")
-                                push!(symbols, clean_symbol)
-                            end
-                        end
-                    end
-                end
-            else
-                # For static libraries (.a), use nm
-                result = read(`nm -g $real_library_path`, String)
-                for line in split(result, '\n')
-                    line = strip(line)
-                    if isempty(line)
-                        continue
-                    end
-                    
-                    # nm output format: address type symbol_name
-                    parts = split(line)
-                    if length(parts) >= 2
-                        if length(parts) == 3
-                            symbol_type = parts[2]
-                            symbol_name = parts[3]
-                        else
-                            symbol_type = parts[1]
-                            symbol_name = parts[2]
-                        end
-                        
-                        # Only include defined symbols (T, D, B, etc.) not undefined (U)
-                        if symbol_type != "U" && !isempty(symbol_name)
-                            # Remove version suffixes like @@GLIBC_2.2.5
-                            clean_symbol = split(symbol_name, '@')[1]
-                            if !startswith(clean_symbol, "_")
-                                push!(symbols, clean_symbol)
-                            end
-                        end
-                    end
-                end
-            end
-        catch e
-            println("Warning: Failed to extract symbols from $real_library_path: $e")
-        end
+        println("Warning: Failed to parse linker script $library_path: $e")
     end
     
     return symbols
