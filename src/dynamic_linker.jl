@@ -1,0 +1,381 @@
+# Dynamic Linker Implementation
+# Core functionality for linking ELF objects
+
+using Printf
+
+"""
+    Symbol
+
+Represents a symbol in the linker's symbol table.
+"""
+struct Symbol
+    name::String
+    value::UInt64
+    size::UInt64
+    binding::UInt8
+    type::UInt8
+    section::UInt16
+    defined::Bool
+    source_file::String
+end
+
+"""
+    MemoryRegion
+
+Represents a memory region for loaded sections.
+"""
+mutable struct MemoryRegion
+    data::Vector{UInt8}
+    base_address::UInt64
+    size::UInt64
+    permissions::UInt8  # Read/Write/Execute flags
+end
+
+"""
+    DynamicLinker
+
+Main dynamic linker state.
+"""
+mutable struct DynamicLinker
+    loaded_objects::Vector{ElfFile}
+    global_symbol_table::Dict{String, Symbol}
+    memory_regions::Vector{MemoryRegion}
+    base_address::UInt64
+    next_address::UInt64
+end
+
+"""
+    DynamicLinker() -> DynamicLinker
+
+Create a new dynamic linker instance.
+"""
+function DynamicLinker(base_address::UInt64 = UInt64(0x400000))
+    return DynamicLinker(
+        ElfFile[],
+        Dict{String, Symbol}(),
+        MemoryRegion[],
+        base_address,
+        base_address
+    )
+end
+
+"""
+    load_object(linker::DynamicLinker, filename::String) -> Bool
+
+Load an ELF object file into the linker.
+"""
+function load_object(linker::DynamicLinker, filename::String)
+    try
+        elf_file = parse_elf_file(filename)
+        push!(linker.loaded_objects, elf_file)
+        
+        # Extract symbols from this object
+        extract_symbols!(linker, elf_file)
+        
+        println("Loaded object: $filename")
+        return true
+    catch e
+        println("Failed to load object $filename: $e")
+        return false
+    end
+end
+
+"""
+    extract_symbols!(linker::DynamicLinker, elf_file::ElfFile)
+
+Extract symbols from an ELF file and add them to the global symbol table.
+"""
+function extract_symbols!(linker::DynamicLinker, elf_file::ElfFile)
+    for sym in elf_file.symbols
+        if sym.name == 0  # Skip unnamed symbols
+            continue
+        end
+        
+        symbol_name = get_string_from_table(elf_file.symbol_string_table, sym.name)
+        if isempty(symbol_name)
+            continue
+        end
+        
+        binding = st_bind(sym.info)
+        sym_type = st_type(sym.info)
+        
+        # Process all symbols for debugging but only add global/weak to global table
+        defined = sym.shndx != 0  # SHN_UNDEF = 0
+        
+        symbol = Symbol(
+            symbol_name,
+            sym.value,
+            sym.size,
+            binding,
+            sym_type,
+            sym.shndx,
+            defined,
+            elf_file.filename
+        )
+        
+        if binding == STB_GLOBAL || binding == STB_WEAK
+            
+            # Handle symbol conflicts
+            if haskey(linker.global_symbol_table, symbol_name)
+                existing = linker.global_symbol_table[symbol_name]
+                
+                # Global symbols override weak symbols
+                if binding == STB_GLOBAL && existing.binding == STB_WEAK
+                    linker.global_symbol_table[symbol_name] = symbol
+                    println("Symbol '$symbol_name': global definition overrides weak")
+                elseif binding == STB_WEAK && existing.binding == STB_GLOBAL
+                    # Keep existing global symbol
+                    println("Symbol '$symbol_name': keeping existing global definition")
+                elseif binding == STB_GLOBAL && existing.binding == STB_GLOBAL && defined && existing.defined
+                    error("Multiple definitions of global symbol '$symbol_name'")
+                end
+            else
+                linker.global_symbol_table[symbol_name] = symbol
+            end
+        end
+    end
+end
+
+"""
+    resolve_symbols(linker::DynamicLinker) -> Vector{String}
+
+Resolve all symbols and return a list of unresolved symbols.
+"""
+function resolve_symbols(linker::DynamicLinker)
+    unresolved = String[]
+    
+    for (name, symbol) in linker.global_symbol_table
+        if !symbol.defined
+            push!(unresolved, name)
+        end
+    end
+    
+    return unresolved
+end
+
+"""
+    allocate_memory_regions!(linker::DynamicLinker)
+
+Allocate memory regions for all loaded sections.
+"""
+function allocate_memory_regions!(linker::DynamicLinker)
+    current_address = linker.next_address
+    
+    for elf_file in linker.loaded_objects
+        for section in elf_file.sections
+            # Only allocate memory for sections that need it
+            if section.flags & SHF_ALLOC != 0 && section.size > 0
+                # Align address
+                aligned_addr = align_address(current_address, section.addralign)
+                
+                # Create memory region
+                region = MemoryRegion(
+                    zeros(UInt8, section.size),
+                    aligned_addr,
+                    section.size,
+                    get_section_permissions(section.flags)
+                )
+                
+                # Load section data if it exists in file
+                if section.type == SHT_PROGBITS && section.offset > 0
+                    open(elf_file.filename, "r") do io
+                        seek(io, section.offset)
+                        read!(io, region.data)
+                    end
+                end
+                
+                push!(linker.memory_regions, region)
+                current_address = aligned_addr + section.size
+                
+                section_name = get_string_from_table(elf_file.string_table, section.name)
+                println("Allocated memory region for section '$section_name' at 0x$(string(aligned_addr, base=16))")
+            end
+        end
+    end
+    
+    linker.next_address = current_address
+end
+
+"""
+    align_address(addr::UInt64, alignment::UInt64) -> UInt64
+
+Align an address to the specified alignment.
+"""
+function align_address(addr::UInt64, alignment::UInt64)
+    if alignment == 0 || alignment == 1
+        return addr
+    end
+    
+    mask = alignment - 1
+    return (addr + mask) & ~mask
+end
+
+"""
+    get_section_permissions(flags::UInt64) -> UInt8
+
+Convert section flags to permission bits.
+"""
+function get_section_permissions(flags::UInt64)
+    permissions = 0x0
+    
+    # Read permission (always granted for allocated sections)
+    permissions |= 0x1
+    
+    # Write permission
+    if flags & SHF_WRITE != 0
+        permissions |= 0x2
+    end
+    
+    # Execute permission
+    if flags & SHF_EXECINSTR != 0
+        permissions |= 0x4
+    end
+    
+    return permissions
+end
+
+"""
+    perform_relocations!(linker::DynamicLinker)
+
+Perform relocations for all loaded objects.
+"""
+function perform_relocations!(linker::DynamicLinker)
+    for elf_file in linker.loaded_objects
+        for relocation in elf_file.relocations
+            perform_relocation!(linker, elf_file, relocation)
+        end
+    end
+end
+
+"""
+    perform_relocation!(linker::DynamicLinker, elf_file::ElfFile, relocation::RelocationEntry)
+
+Perform a single relocation.
+"""
+function perform_relocation!(linker::DynamicLinker, elf_file::ElfFile, relocation::RelocationEntry)
+    sym_index = elf64_r_sym(relocation.info)
+    rel_type = elf64_r_type(relocation.info)
+    
+    # Get symbol
+    if sym_index == 0
+        symbol_value = 0
+        symbol_name = ""
+    elseif sym_index <= length(elf_file.symbols)
+        symbol = elf_file.symbols[sym_index]
+        symbol_name = get_string_from_table(elf_file.symbol_string_table, symbol.name)
+        
+        if !isempty(symbol_name) && haskey(linker.global_symbol_table, symbol_name)
+            global_symbol = linker.global_symbol_table[symbol_name]
+            if global_symbol.defined
+                symbol_value = global_symbol.value
+            else
+                println("Warning: Undefined symbol: $symbol_name")
+                symbol_value = 0
+            end
+        elseif !isempty(symbol_name)
+            # Handle undefined reference
+            println("Warning: Undefined reference to symbol: $symbol_name")
+            symbol_value = 0  # Use 0 for undefined symbols for now
+        else
+            symbol_value = symbol.value  # Use symbol value as-is for local symbols
+        end
+    else
+        error("Invalid symbol index: $sym_index")
+    end
+    
+    # Perform relocation based on type
+    if rel_type == R_X86_64_64
+        # Direct 64-bit address
+        value = symbol_value + relocation.addend
+        println("R_X86_64_64 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")
+    elseif rel_type == R_X86_64_PC32
+        # PC-relative 32-bit
+        # Note: This is simplified - in reality we'd need to patch memory
+        target_addr = relocation.offset  # This would be the actual location in memory
+        value = symbol_value + relocation.addend - target_addr
+        println("R_X86_64_PC32 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")
+    else
+        println("Unsupported relocation type: $rel_type")
+    end
+end
+
+"""
+    link_objects(filenames::Vector{String}; base_address::UInt64 = 0x400000) -> DynamicLinker
+
+Link multiple ELF object files together.
+"""
+function link_objects(filenames::Vector{String}; base_address::UInt64 = UInt64(0x400000))
+    linker = DynamicLinker(base_address)
+    
+    # Load all objects
+    for filename in filenames
+        if !load_object(linker, filename)
+            error("Failed to load object: $filename")
+        end
+    end
+    
+    # Resolve symbols
+    unresolved = resolve_symbols(linker)
+    if !isempty(unresolved)
+        println("Warning: Unresolved symbols:")
+        for sym in unresolved
+            println("  - $sym")
+        end
+    end
+    
+    # Allocate memory regions
+    allocate_memory_regions!(linker)
+    
+    # Perform relocations
+    perform_relocations!(linker)
+    
+    println("Linking completed successfully!")
+    return linker
+end
+
+"""
+    print_symbol_table(linker::DynamicLinker)
+
+Print the global symbol table.
+"""
+function print_symbol_table(linker::DynamicLinker)
+    println("Global Symbol Table:")
+    println("Name                  | Value      | Size       | Bind | Type | Defined | Source")
+    println("-" ^ 80)
+    
+    for (name, symbol) in sort(collect(linker.global_symbol_table), by=x->x[1])
+        binding_str = symbol.binding == STB_GLOBAL ? "GLOBAL" : 
+                     symbol.binding == STB_WEAK ? "WEAK" : "OTHER"
+        
+        type_str = symbol.type == STT_FUNC ? "FUNC" :
+                  symbol.type == STT_OBJECT ? "OBJECT" :
+                  symbol.type == STT_NOTYPE ? "NOTYPE" : "OTHER"
+        
+        defined_str = symbol.defined ? "YES" : "NO"
+        
+        @printf("%-20s | 0x%08x | 0x%08x | %-6s | %-6s | %-7s | %s\n",
+                name[1:min(20, length(name))], symbol.value, symbol.size,
+                binding_str, type_str, defined_str, basename(symbol.source_file))
+    end
+end
+
+"""
+    print_memory_layout(linker::DynamicLinker)
+
+Print the memory layout of loaded regions.
+"""
+function print_memory_layout(linker::DynamicLinker)
+    println("Memory Layout:")
+    println("Base Address  | Size       | Permissions")
+    println("-" ^ 40)
+    
+    for region in linker.memory_regions
+        perm_str = ""
+        perm_str *= (region.permissions & 0x1) != 0 ? "R" : "-"
+        perm_str *= (region.permissions & 0x2) != 0 ? "W" : "-"
+        perm_str *= (region.permissions & 0x4) != 0 ? "X" : "-"
+        
+        @printf("0x%08x    | 0x%08x | %s\n",
+                region.base_address, region.size, perm_str)
+    end
+end
