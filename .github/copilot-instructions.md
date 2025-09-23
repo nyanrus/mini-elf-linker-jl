@@ -76,8 +76,55 @@ Expect plans to change - redesign mathematically at each iteration:
 \textbf{Corrected Model:} \mathcal{M}' \text{ where } A_k \text{ replaced by } A_k'
 ```
 
+## Source Specification Requirements
+**MANDATORY**: Before implementing any source file, create a detailed mathematical specification in `/docs/` using markdown with mathematical notation.
+
+### Required Documentation Structure:
+For every source file `src/filename.jl`, create `docs/filename_spec.md` containing:
+
+1. **Mathematical Foundation**:
+```latex
+\textbf{Module:} \texttt{filename.jl}
+\textbf{Purpose:} \text{Mathematical description of module purpose}
+\textbf{Domain:} \mathcal{D} = \{\text{input domain definition}\}
+\textbf{Codomain:} \mathcal{R} = \{\text{output domain definition}\}
+```
+
+2. **Data Structure Specifications**:
+```latex
+\textbf{Structure:} \texttt{StructName}
+\textbf{Mathematical Model:} S = \langle f_1, f_2, \ldots, f_n \rangle
+\textbf{Invariants:} \mathcal{I} = \{P_1(S), P_2(S), \ldots\}
+\textbf{Operations:} \Omega = \{\omega_1: S \to S', \omega_2: S \times T \to U, \ldots\}
+```
+
+3. **Function Specifications**:
+```latex
+\textbf{Function:} \texttt{function\_name}(x_1, x_2, \ldots, x_n)
+\textbf{Signature:} f: \mathcal{D}_1 \times \mathcal{D}_2 \times \cdots \times \mathcal{D}_n \to \mathcal{R}
+\textbf{Precondition:} \forall i: P_i(x_i) \land \text{global constraints}
+\textbf{Postcondition:} Q(f(x_1, \ldots, x_n)) \land \text{invariant preservation}
+\textbf{Algorithm:} \text{Mathematical pseudocode with complexity analysis}
+```
+
+4. **Mathematical Properties**:
+```latex
+\textbf{Complexity:} \mathcal{O}(\text{time/space bounds})
+\textbf{Correctness:} \text{Proof sketch or verification conditions}
+\textbf{Invariants:} \text{What mathematical properties are preserved}
+\textbf{Dependencies:} \text{Mathematical relationships with other modules}
+```
+
+### Enforcement Rules:
+- **NO CODE IMPLEMENTATION** without corresponding mathematical specification first
+- Every function must have formal mathematical signature and properties
+- All data structures must have mathematical models and invariants
+- Algorithm descriptions must use formal mathematical notation
+- Complexity analysis required for all non-trivial operations
+
 ## Implementation Rules
 - Always start each coding session with mathematical replanning
+- **Create or update corresponding `/docs/` specification before any code changes**
 - Convert mathematical notation directly to Julia syntax
 - Preserve mathematical structure in variable names: `S_intersection`, `compose_functions`
 - Use `julia --quiet script.jl` for execution
@@ -86,6 +133,7 @@ Expect plans to change - redesign mathematically at each iteration:
 - Maintain clear correspondence between mathematical operations and code
 - Use mathematical terminology in function and variable names
 - Document mathematical foundations in docstrings using LaTeX notation
+- **Verify specification-to-code correspondence after implementation**
 
 ## Execution Strategy
 - Avoid REPL usage; use `julia script.jl` for all testing
