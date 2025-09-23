@@ -6,9 +6,11 @@
 
 **Purpose:** Mathematical operations for symbol resolution, memory allocation, and object linking
 
-**Domain:** $\mathcal{D} = \{\text{ELF objects}\} \times \{\text{Symbol tables}\} \times \{\text{Memory layouts}\}$
+**Domain:** 
+$$\mathcal{D} = \{\text{ELF objects}\} \times \{\text{Symbol tables}\} \times \{\text{Memory layouts}\}$$
 
-**Codomain:** $\mathcal{R} = \{\text{Linked executables}\} \cup \{\text{Resolved symbols}\} \cup \{\text{Memory mappings}\}$
+**Codomain:** 
+$$\mathcal{R} = \{\text{Linked executables}\} \cup \{\text{Resolved symbols}\} \cup \{\text{Memory mappings}\}$$
 
 ## Data Structure Specifications
 
@@ -16,24 +18,28 @@
 
 **Structure:** `Symbol`
 
-**Mathematical Model:** $S = \langle n, v, s, b, t, sec, d, src \rangle$
+**Mathematical Model:** 
+$$S = \langle n, v, s, b, t, \text{sec}, d, \text{src} \rangle$$
 
 **Field Definitions:**
 $$\begin{align}
-n &: \text{String} && \text{Symbol name} \\
-v &: \mathbb{N}_{64} && \text{Symbol value/address} \\
-s &: \mathbb{N}_{64} && \text{Symbol size} \\
-b &: \{0, 1, 2, 10, 11, 12, 13\} && \text{Binding type} \\
-t &: \{0, 1, 2, 3, 4\} && \text{Symbol type} \\
-sec &: \mathbb{N}_{16} && \text{Section index} \\
-d &: \{\text{true}, \text{false}\} && \text{Definition status} \\
-src &: \text{String} && \text{Source file}
+n &\in \text{String} &&\text{Symbol name} \\
+v &\in \mathbb{N}_{64} &&\text{Symbol value/address} \\
+s &\in \mathbb{N}_{64} &&\text{Symbol size} \\
+b &\in \{0, 1, 2, 10, 11, 12, 13\} &&\text{Binding type} \\
+t &\in \{0, 1, 2, 3, 4\} &&\text{Symbol type} \\
+\text{sec} &\in \mathbb{N}_{16} &&\text{Section index} \\
+d &\in \{\text{true}, \text{false}\} &&\text{Definition status} \\
+\text{src} &\in \text{String} &&\text{Source file}
 \end{align}$$
 
-**Invariants:** $\mathcal{I}_S = \{
-  d = \text{true} \implies v \neq 0, \quad
-  b \in \{\text{STB\_LOCAL}, \text{STB\_GLOBAL}, \text{STB\_WEAK}\}
-\}$
+**Invariants:** 
+$$\mathcal{I}_S = \left\{
+\begin{aligned}
+&d = \text{true} \implies v \neq 0 \\
+&b \in \{\text{STB\_LOCAL}, \text{STB\_GLOBAL}, \text{STB\_WEAK}\}
+\end{aligned}
+\right\}$$
 
 ### Memory Region Model
 
@@ -79,22 +85,25 @@ base &: \mathbb{N}_{64} && \text{Base load address}
 
 **Function:** `resolve_symbols(linker)`
 
-**Signature:** $f_{resolve}: \texttt{DynamicLinker} \to \texttt{DynamicLinker} \cup \{\text{Error}\}$
+**Signature:** 
+$$f_{\text{resolve}}: \texttt{DynamicLinker} \to \texttt{DynamicLinker} \cup \{\text{Error}\}$$
 
-**Precondition:** All objects loaded into linker state
+**Precondition:** 
+$$\text{All objects loaded into linker state}$$
 
-**Postcondition:** All resolvable symbols have defined values
+**Postcondition:** 
+$$\text{All resolvable symbols have defined values}$$
 
 **Algorithm:**
 $$\begin{align}
-&\textbf{Input:} \text{DynamicLinker } L \\
-&\textbf{Step 1:} \text{Collect all symbol definitions} \\
-&\textbf{Step 2:} \text{For each undefined symbol } u: \\
-&\quad\quad \text{Find definition } d \text{ in global table} \\
-&\quad\quad \text{If strong binding: assign } u.v \leftarrow d.v \\
-&\quad\quad \text{If weak binding: use default or skip} \\
-&\textbf{Step 3:} \text{Verify no unresolved strong symbols} \\
-&\textbf{Output:} \text{Updated linker state}
+&\textbf{Input:} \quad \text{DynamicLinker } L \\
+&\textbf{Step 1:} \quad \text{Collect all symbol definitions} \\
+&\textbf{Step 2:} \quad \text{For each undefined symbol } u: \\
+&\qquad\qquad \text{Find definition } d \text{ in global table} \\
+&\qquad\qquad \text{If strong binding: assign } u.v \leftarrow d.v \\
+&\qquad\qquad \text{If weak binding: use default or skip} \\
+&\textbf{Step 3:} \quad \text{Verify no unresolved strong symbols} \\
+&\textbf{Output:} \quad \text{Updated linker state}
 \end{align}$$
 
 ### Object Loading
@@ -184,15 +193,20 @@ $$\begin{align}
 
 ### Complexity Analysis
 
-**Symbol Resolution:** $\mathcal{O}(n \cdot m)$ where $n = \text{symbols}$, $m = \text{objects}$
+**Symbol Resolution:** 
+$$\mathcal{O}(n \cdot m) \text{ where } n = \text{symbols}, m = \text{objects}$$
 
-**Object Loading:** $\mathcal{O}(s + sym)$ where $s = \text{sections}$, $sym = \text{symbols}$
+**Object Loading:** 
+$$\mathcal{O}(s + \text{sym}) \text{ where } s = \text{sections}, \text{sym} = \text{symbols}$$
 
-**Relocation:** $\mathcal{O}(r)$ where $r = \text{number of relocations}$
+**Relocation:** 
+$$\mathcal{O}(r) \text{ where } r = \text{number of relocations}$$
 
-**Memory Allocation:** $\mathcal{O}(\log(m))$ with sorted memory regions
+**Memory Allocation:** 
+$$\mathcal{O}(\log(m)) \text{ with sorted memory regions}$$
 
-**Complete Linking:** $\mathcal{O}(n \cdot m + r + s \cdot \log(s))$
+**Complete Linking:** 
+$$\mathcal{O}(n \cdot m + r + s \cdot \log(s))$$
 
 ### Correctness Properties
 

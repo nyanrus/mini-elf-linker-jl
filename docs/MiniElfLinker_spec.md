@@ -6,9 +6,11 @@
 
 **Purpose:** Mathematical composition and orchestration of ELF linking operations
 
-**Domain:** $\mathcal{D} = \{\text{Module exports}\} \times \{\text{Component integration}\}$
+**Domain:** 
+$$\mathcal{D} = \{\text{Module exports}\} \times \{\text{Component integration}\}$$
 
-**Codomain:** $\mathcal{R} = \{\text{Unified linker interface}\} \cup \{\text{Public API}\}$
+**Codomain:** 
+$$\mathcal{R} = \{\text{Unified linker interface}\} \cup \{\text{Public API}\}$$
 
 ## Data Structure Specifications
 
@@ -16,13 +18,14 @@
 
 **Structure:** `ModuleExports`
 
-**Mathematical Model:** $E = \langle T, F, C \rangle$
+**Mathematical Model:** 
+$$E = \langle T, F, C \rangle$$
 
 **Export Categories:**
 $$\begin{align}
-T &: \text{Set}(\text{Type definitions}) && \text{Data structures} \\
-F &: \text{Set}(\text{Function signatures}) && \text{Operations} \\
-C &: \text{Set}(\text{Constants}) && \text{Configuration values}
+T &\in \text{Set}(\text{Type definitions}) &&\text{Data structures} \\
+F &\in \text{Set}(\text{Function signatures}) &&\text{Operations} \\
+C &\in \text{Set}(\text{Constants}) &&\text{Configuration values}
 \end{align}$$
 
 **Export Classification:**

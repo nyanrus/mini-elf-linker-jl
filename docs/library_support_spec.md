@@ -6,9 +6,11 @@
 
 **Purpose:** Mathematical operations for system library detection, symbol resolution, and dynamic linking
 
-**Domain:** $\mathcal{D} = \{\text{Library paths}\} \times \{\text{Symbol names}\} \times \{\text{Library types}\}$
+**Domain:** 
+$$\mathcal{D} = \{\text{Library paths}\} \times \{\text{Symbol names}\} \times \{\text{Library types}\}$$
 
-**Codomain:** $\mathcal{R} = \{\text{Library info}\} \cup \{\text{Symbol mappings}\} \cup \{\text{Resolution results}\}$
+**Codomain:** 
+$$\mathcal{R} = \{\text{Library info}\} \cup \{\text{Symbol mappings}\} \cup \{\text{Resolution results}\}$$
 
 ## Data Structure Specifications
 
@@ -16,7 +18,8 @@
 
 **Enumeration:** `LibraryType`
 
-**Mathematical Model:** $T \in \{\text{GLIBC}, \text{MUSL}, \text{UNKNOWN}\}$
+**Mathematical Model:** 
+$$T \in \{\text{GLIBC}, \text{MUSL}, \text{UNKNOWN}\}$$
 
 **Type Properties:**
 $$\begin{align}
@@ -26,7 +29,7 @@ $$\begin{align}
 \end{align}$$
 
 **Classification Function:**
-$$f_{classify}: \text{BinaryContent} \to T$$
+$$f_{\text{classify}}: \text{BinaryContent} \to T$$
 
 ### Library Information Model
 

@@ -6,9 +6,11 @@
 
 **Purpose:** Mathematical parsing operations from binary ELF data to structured representations
 
-**Domain:** $\mathcal{D} = \{\text{IO streams}\} \cup \{\text{File paths}\} \cup \{\text{Binary data sequences}\}$
+**Domain:** 
+$$\mathcal{D} = \{\text{IO streams}\} \cup \{\text{File paths}\} \cup \{\text{Binary data sequences}\}$$
 
-**Codomain:** $\mathcal{R} = \{\text{ELF structured data}\} \cup \{\text{Error states}\}$
+**Codomain:** 
+$$\mathcal{R} = \{\text{ELF structured data}\} \cup \{\text{Error states}\}$$
 
 ## Data Structure Specifications
 
@@ -16,21 +18,25 @@
 
 **Structure:** `ElfFile`
 
-**Mathematical Model:** $F = \langle h, s, sym, rel, str \rangle$
+**Mathematical Model:** 
+$$F = \langle h, s, \text{sym}, \text{rel}, \text{str} \rangle$$
 
 **Components:**
 $$\begin{align}
-h &: \texttt{ElfHeader} && \text{File header} \\
-s &: \text{List}(\texttt{SectionHeader}) && \text{Section headers} \\
-sym &: \text{List}(\texttt{SymbolTableEntry}) && \text{Symbol table} \\
-rel &: \text{List}(\texttt{RelocationEntry}) && \text{Relocations} \\
-str &: \text{List}(\text{String}) && \text{String tables}
+h &\in \texttt{ElfHeader} &&\text{File header} \\
+s &\in \text{List}(\texttt{SectionHeader}) &&\text{Section headers} \\
+\text{sym} &\in \text{List}(\texttt{SymbolTableEntry}) &&\text{Symbol table} \\
+\text{rel} &\in \text{List}(\texttt{RelocationEntry}) &&\text{Relocations} \\
+\text{str} &\in \text{List}(\text{String}) &&\text{String tables}
 \end{align}$$
 
-**Invariants:** $\mathcal{I}_F = \{
-  |s| = h.\text{shnum}, \quad
-  \forall i: s[i].\text{type} \in \{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11\}
-\}$
+**Invariants:** 
+$$\mathcal{I}_F = \left\{
+\begin{aligned}
+&|s| = h.\text{shnum} \\
+&\forall i \in [0, |s|): s[i].\text{type} \in \{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11\}
+\end{aligned}
+\right\}$$
 
 ## Function Specifications
 
@@ -38,43 +44,48 @@ str &: \text{List}(\text{String}) && \text{String tables}
 
 **Function:** `parse_elf_header(io)`
 
-**Signature:** $f_{header}: \text{IO} \to \texttt{ElfHeader} \cup \{\text{Error}\}$
+**Signature:** 
+$$f_{\text{header}}: \text{IO} \to \texttt{ElfHeader} \cup \{\text{Error}\}$$
 
-**Precondition:** io points to valid ELF file start
+**Precondition:** 
+$$\text{io points to valid ELF file start}$$
 
-**Postcondition:** Valid ElfHeader with magic $= (0x7f, 0x45, 0x4c, 0x46)$
+**Postcondition:** 
+$$\text{Valid ElfHeader with magic} = (0x7f, 0x45, 0x4c, 0x46)$$
 
 **Algorithm:**
 $$\begin{align}
-&\textbf{Input:} \text{IO stream } io \\
-&\textbf{Step 1:} \text{Read magic bytes } m \leftarrow \text{read}(io, 4) \\
-&\textbf{Step 2:} \text{Verify } m = (0x7f, 0x45, 0x4c, 0x46) \\
-&\textbf{Step 3:} \text{Parse remaining header fields sequentially} \\
-&\textbf{Output:} \texttt{ElfHeader}(m, \text{class}, \text{data}, \ldots)
+&\textbf{Input:} \quad \text{IO stream } \textit{io} \\
+&\textbf{Step 1:} \quad \text{Read magic bytes } m \leftarrow \text{read}(\textit{io}, 4) \\
+&\textbf{Step 2:} \quad \text{Verify } m = (0x7f, 0x45, 0x4c, 0x46) \\
+&\textbf{Step 3:} \quad \text{Parse remaining header fields sequentially} \\
+&\textbf{Output:} \quad \texttt{ElfHeader}(m, \text{class}, \text{data}, \ldots)
 \end{align}$$
 
 ### Section Headers Parsing
 
 **Function:** `parse_section_headers(io, header)`
 
-**Signature:** $f_{sections}: \text{IO} \times \texttt{ElfHeader} \to \text{List}(\texttt{SectionHeader})$
+**Signature:** 
+$$f_{\text{sections}}: \text{IO} \times \texttt{ElfHeader} \to \text{List}(\texttt{SectionHeader})$$
 
 **Precondition:** 
-$$\begin{align}
-&\text{header.shoff} > 0 \\
-&\text{header.shnum} \geq 0 \\
-&\text{io positioned at valid ELF file}
-\end{align}$$
+$$\begin{cases}
+\text{header.shoff} > 0 \\
+\text{header.shnum} \geq 0 \\
+\text{io positioned at valid ELF file}
+\end{cases}$$
 
-**Postcondition:** $|\text{result}| = \text{header.shnum}$
+**Postcondition:** 
+$$|\text{result}| = \text{header.shnum}$$
 
 **Algorithm:**
 $$\begin{align}
-&\textbf{Input:} \text{IO } io, \text{ElfHeader } h \\
-&\textbf{Step 1:} \text{Seek to } h.\text{shoff} \\
-&\textbf{Step 2:} \text{For } i \in [0, h.\text{shnum}): \\
-&\quad\quad \text{Parse section header } s_i \\
-&\textbf{Output:} [s_0, s_1, \ldots, s_{h.\text{shnum}-1}]
+&\textbf{Input:} \quad \text{IO } \textit{io}, \text{ElfHeader } h \\
+&\textbf{Step 1:} \quad \text{Seek to } h.\text{shoff} \\
+&\textbf{Step 2:} \quad \text{For } i \in [0, h.\text{shnum}): \\
+&\qquad\qquad \text{Parse section header } s_i \\
+&\textbf{Output:} \quad [s_0, s_1, \ldots, s_{h.\text{shnum}-1}]
 \end{align}$$
 
 ### Symbol Table Parsing
@@ -135,17 +146,23 @@ $$\begin{align}
 
 ### Complexity Analysis
 
-**Header Parsing:** $\mathcal{O}(1)$ - Fixed size read
+**Header Parsing:** 
+$$\mathcal{O}(1) \text{ — Fixed size read}$$
 
-**Section Headers:** $\mathcal{O}(n)$ where $n = \text{header.shnum}$
+**Section Headers:** 
+$$\mathcal{O}(n) \text{ where } n = \text{header.shnum}$$
 
-**Symbol Table:** $\mathcal{O}(m)$ where $m = \text{number of symbols}$
+**Symbol Table:** 
+$$\mathcal{O}(m) \text{ where } m = \text{number of symbols}$$
 
-**Relocations:** $\mathcal{O}(r)$ where $r = \text{number of relocations}$
+**Relocations:** 
+$$\mathcal{O}(r) \text{ where } r = \text{number of relocations}$$
 
-**String Table:** $\mathcal{O}(s)$ where $s = \text{string table size}$
+**String Table:** 
+$$\mathcal{O}(s) \text{ where } s = \text{string table size}$$
 
-**Complete File:** $\mathcal{O}(n + m + r + s)$
+**Complete File:** 
+$$\mathcal{O}(n + m + r + s)$$
 
 ### Correctness Properties
 

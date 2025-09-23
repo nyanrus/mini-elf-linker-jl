@@ -6,9 +6,11 @@
 
 **Purpose:** Mathematical serialization operations from structured ELF data to binary executable format
 
-**Domain:** $\mathcal{D} = \{\text{Linked objects}\} \times \{\text{Memory layouts}\} \times \{\text{Symbol tables}\}$
+**Domain:** 
+$$\mathcal{D} = \{\text{Linked objects}\} \times \{\text{Memory layouts}\} \times \{\text{Symbol tables}\}$$
 
-**Codomain:** $\mathcal{R} = \{\text{Binary ELF files}\} \cup \{\text{IO streams}\}$
+**Codomain:** 
+$$\mathcal{R} = \{\text{Binary ELF files}\} \cup \{\text{IO streams}\}$$
 
 ## Data Structure Specifications
 
@@ -158,15 +160,20 @@ $$\begin{align}
 
 ### Complexity Analysis
 
-**Header Writing:** $\mathcal{O}(1)$ - Fixed size operations
+**Header Writing:** 
+$$\mathcal{O}(1) \text{ — Fixed size operations}$$
 
-**Program Header Generation:** $\mathcal{O}(n)$ where $n = \text{memory regions}$
+**Program Header Generation:** 
+$$\mathcal{O}(n) \text{ where } n = \text{memory regions}$$
 
-**Layout Computation:** $\mathcal{O}(n \cdot \log(n))$ with sorting
+**Layout Computation:** 
+$$\mathcal{O}(n \cdot \log(n)) \text{ with sorting}$$
 
-**File Writing:** $\mathcal{O}(s)$ where $s = \text{total file size}$
+**File Writing:** 
+$$\mathcal{O}(s) \text{ where } s = \text{total file size}$$
 
-**Complete Generation:** $\mathcal{O}(n \cdot \log(n) + s)$
+**Complete Generation:** 
+$$\mathcal{O}(n \cdot \log(n) + s)$$
 
 ### Correctness Properties
 
