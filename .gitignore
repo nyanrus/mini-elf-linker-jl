@@ -1,0 +1,6 @@
+# Generated files
+*.o
+*.out
+*.exe
+my_first_executable
+/tmp/*
