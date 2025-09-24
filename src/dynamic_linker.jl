@@ -306,8 +306,14 @@ function perform_relocation!(linker::DynamicLinker, elf_file::ElfFile, relocatio
         symbol_value = 0
         symbol_name = ""
     elseif sym_index <= length(elf_file.symbols)
-        symbol = elf_file.symbols[sym_index]
-        symbol_name = get_string_from_table(elf_file.symbol_string_table, symbol.name)
+        # Convert from 0-based ELF indexing to 1-based Julia indexing
+        julia_index = sym_index + 1
+        if julia_index <= length(elf_file.symbols)
+            symbol = elf_file.symbols[julia_index]
+            symbol_name = get_string_from_table(elf_file.symbol_string_table, symbol.name)
+        else
+            error("Invalid symbol index after conversion: $sym_index -> $julia_index")
+        end
         
         if !isempty(symbol_name) && haskey(linker.global_symbol_table, symbol_name)
             global_symbol = linker.global_symbol_table[symbol_name]
@@ -352,13 +358,14 @@ function perform_relocation!(linker::DynamicLinker, elf_file::ElfFile, relocatio
         println("R_X86_64_64 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")
     elseif rel_type == R_X86_64_PC32
         # PC-relative 32-bit
-        target_addr = text_region.base_address + relocation.offset
+        target_addr = text_region.base_address + relocation.offset + 4  # +4 for next instruction
         value = Int64(symbol_value) + relocation.addend - Int64(target_addr)
         apply_relocation_to_region!(text_region, relocation.offset, value, 4)
         println("R_X86_64_PC32 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")
     elseif rel_type == R_X86_64_PLT32
         # PLT 32-bit address (for static linking, treat like PC32)
-        target_addr = text_region.base_address + relocation.offset
+        # For call instructions, the target address should be the address of the next instruction
+        target_addr = text_region.base_address + relocation.offset + 4  # +4 for next instruction
         value = Int64(symbol_value) + relocation.addend - Int64(target_addr)
         apply_relocation_to_region!(text_region, relocation.offset, value, 4)
         println("R_X86_64_PLT32 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")
