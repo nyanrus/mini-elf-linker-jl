@@ -59,39 +59,97 @@ end
 """
     create_program_headers(linker::DynamicLinker) -> Vector{ProgramHeader}
 
-Create program headers for the memory regions in the linker.
+Create proper program headers that group memory regions into segments like LLD.
+
+Mathematical model for segment grouping:
+```math
+segments = \\{text\\_segment, rodata\\_segment, data\\_segment\\}
+```
+
+Where:
+```math
+\\begin{align}
+text\\_segment &= \\{region : region.permissions = R+X\\} \\\\
+rodata\\_segment &= \\{region : region.permissions = R\\} \\\\
+data\\_segment &= \\{region : region.permissions = R+W\\}
+\\end{align}
+```
 """
 function create_program_headers(linker::DynamicLinker)
+    if isempty(linker.memory_regions)
+        return ProgramHeader[]
+    end
+    
+    # Group memory regions by permissions to create proper segments
+    text_regions = MemoryRegion[]      # R+X (executable)
+    rodata_regions = MemoryRegion[]    # R (read-only data)
+    data_regions = MemoryRegion[]      # R+W (writable data)
+    
+    for region in linker.memory_regions
+        perms = region.permissions
+        if (perms & 0x4) != 0  # Execute permission - text segment
+            push!(text_regions, region)
+        elseif (perms & 0x2) != 0  # Write permission - data segment  
+            push!(data_regions, region)
+        else  # Read-only - rodata segment
+            push!(rodata_regions, region)
+        end
+    end
+    
     program_headers = ProgramHeader[]
     
-    # Create LOAD segments for each memory region
-    for region in linker.memory_regions
-        flags = 0
-        if region.permissions & 0x1 != 0  # Read
-            flags |= PF_R
-        end
-        if region.permissions & 0x2 != 0  # Write  
-            flags |= PF_W
-        end
-        if region.permissions & 0x4 != 0  # Execute
-            flags |= PF_X
-        end
+    # Create text segment (R+X) if we have executable regions
+    if !isempty(text_regions)
+        min_addr = minimum(r.base_address for r in text_regions)
+        max_addr = maximum(r.base_address + r.size for r in text_regions)
+        total_size = max_addr - min_addr
         
-        # Calculate file offset (will be updated when writing)
-        file_offset = 0  # Will be set during layout
-        
-        ph = ProgramHeader(
+        push!(program_headers, ProgramHeader(
             PT_LOAD,                    # type
-            flags,                      # flags
-            file_offset,                # offset (to be filled)
-            region.base_address,        # vaddr
-            region.base_address,        # paddr
-            region.size,                # filesz
-            region.size,                # memsz
-            0x1000                      # align (4KB alignment)
-        )
+            PF_R | PF_X,               # flags (Read + Execute)
+            0,                         # offset (to be filled)
+            min_addr,                  # vaddr
+            min_addr,                  # paddr
+            total_size,                # filesz
+            total_size,                # memsz
+            0x1000                     # align (4KB)
+        ))
+    end
+    
+    # Create rodata segment (R) if we have read-only regions
+    if !isempty(rodata_regions)
+        min_addr = minimum(r.base_address for r in rodata_regions)
+        max_addr = maximum(r.base_address + r.size for r in rodata_regions)
+        total_size = max_addr - min_addr
         
-        push!(program_headers, ph)
+        push!(program_headers, ProgramHeader(
+            PT_LOAD,                    # type
+            PF_R,                      # flags (Read only)
+            0,                         # offset (to be filled)
+            min_addr,                  # vaddr
+            min_addr,                  # paddr
+            total_size,                # filesz
+            total_size,                # memsz
+            0x1000                     # align (4KB)
+        ))
+    end
+    
+    # Create data segment (R+W) if we have writable regions
+    if !isempty(data_regions)
+        min_addr = minimum(r.base_address for r in data_regions)
+        max_addr = maximum(r.base_address + r.size for r in data_regions)
+        total_size = max_addr - min_addr
+        
+        push!(program_headers, ProgramHeader(
+            PT_LOAD,                    # type
+            PF_R | PF_W,               # flags (Read + Write)
+            0,                         # offset (to be filled)
+            min_addr,                  # vaddr
+            min_addr,                  # paddr
+            total_size,                # filesz
+            total_size,                # memsz
+            0x1000                     # align (4KB)
+        ))
     end
     
     return program_headers
@@ -137,7 +195,7 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
             0,                          # osabi (SYSV)
             0,                          # abiversion
             (0, 0, 0, 0, 0, 0, 0),     # pad
-            ET_EXEC,                    # type - EXECUTABLE
+            ET_DYN,                     # type - DYN (Position-Independent Executable)
             EM_X86_64,                  # machine
             UInt32(EV_CURRENT),         # version2
             entry_point,                # entry
@@ -167,17 +225,44 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
             write(io, UInt8(0))
         end
         
-        # Write memory region data
-        for (i, region) in enumerate(linker.memory_regions)
-            # Ensure we're at the correct offset
-            expected_pos = program_headers[i].offset
-            current_pos = position(io)
-            if current_pos != expected_pos
-                seek(io, expected_pos)
+        # Write segment data by grouping memory regions
+        for ph in program_headers
+            # Find all memory regions that belong to this segment
+            segment_regions = filter(linker.memory_regions) do region
+                region.base_address >= ph.vaddr && 
+                region.base_address < ph.vaddr + ph.memsz
             end
             
-            # Write the region data
-            write(io, region.data)
+            # Sort regions by address
+            sort!(segment_regions, by=r -> r.base_address)
+            
+            # Ensure we're at the correct file offset for this segment
+            seek(io, ph.offset)
+            
+            # Write all regions in this segment, padding gaps if needed
+            current_addr = ph.vaddr
+            for region in segment_regions
+                # Add padding if there's a gap
+                if region.base_address > current_addr
+                    gap_size = region.base_address - current_addr
+                    for _ in 1:gap_size
+                        write(io, UInt8(0))
+                    end
+                end
+                
+                # Write the region data
+                write(io, region.data)
+                current_addr = region.base_address + region.size
+            end
+            
+            # Pad to end of segment if needed
+            segment_end = ph.vaddr + ph.filesz
+            if current_addr < segment_end
+                remaining = segment_end - current_addr
+                for _ in 1:remaining
+                    write(io, UInt8(0))
+                end
+            end
         end
     end
     
