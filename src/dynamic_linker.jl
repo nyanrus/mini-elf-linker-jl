@@ -42,6 +42,7 @@ mutable struct DynamicLinker
     memory_regions::Vector{MemoryRegion}
     base_address::UInt64
     next_address::UInt64
+    temp_files::Vector{String}  # Track temporary files for cleanup
 end
 
 """
@@ -55,16 +56,50 @@ function DynamicLinker(base_address::UInt64 = UInt64(0x400000))
         Dict{String, Symbol}(),
         MemoryRegion[],
         base_address,
-        base_address
+        base_address,
+        String[]
     )
 end
 
 """
     load_object(linker::DynamicLinker, filename::String) -> Bool
 
-Load an ELF object file into the linker.
+Load an ELF object file or archive file into the linker.
+
+Mathematical model:
+```math
+load_object: (DynamicLinker, File) \\to Bool
+```
+
+Where:
+```math
+load_object(linker, file) = \\begin{cases}
+load_elf(linker, file) & \\text{if } file \\text{ is ELF} \\\\
+load_archive(linker, file) & \\text{if } file \\text{ is archive} \\\\
+false & \\text{otherwise}
+\\end{cases}
+```
 """
 function load_object(linker::DynamicLinker, filename::String)
+    # Detect file type by magic bytes
+    file_type = detect_file_type_by_magic(filename)
+    
+    if file_type == ELF_FILE
+        return load_elf_object(linker, filename)
+    elseif file_type == AR_FILE
+        return load_archive_objects(linker, filename)
+    else
+        println("Failed to load object $filename: Unsupported file type")
+        return false
+    end
+end
+
+"""
+    load_elf_object(linker::DynamicLinker, filename::String) -> Bool
+
+Load a single ELF object file into the linker.
+"""
+function load_elf_object(linker::DynamicLinker, filename::String)
     try
         elf_file = parse_elf_file(filename)
         push!(linker.loaded_objects, elf_file)
@@ -75,9 +110,136 @@ function load_object(linker::DynamicLinker, filename::String)
         println("Loaded object: $filename")
         return true
     catch e
-        println("Failed to load object $filename: $e")
+        println("Failed to load ELF object $filename: $e")
         return false
     end
+end
+
+"""
+    load_archive_objects(linker::DynamicLinker, filename::String) -> Bool
+
+Load all ELF objects from an archive file into the linker.
+
+Mathematical model for archive extraction:
+```math
+archive.a = \\{object_1.o, object_2.o, \\ldots, object_n.o\\}
+```
+
+```math
+load_archive(linker, archive.a) = \\bigwedge_{i=1}^{n} load_elf(linker, object_i.o)
+```
+"""
+function load_archive_objects(linker::DynamicLinker, filename::String)
+    if detect_file_type_by_magic(filename) != AR_FILE
+        println("Failed to load archive $filename: Not an archive file")
+        return false
+    end
+    
+    objects_loaded = 0
+    
+    try
+        open(filename, "r") do file
+            # Skip archive magic
+            seek(file, 8)
+            
+            while !eof(file)
+                # Read archive member header (60 bytes)
+                if position(file) + 60 > filesize(filename)
+                    break
+                end
+                
+                header = read(file, 60)
+                if length(header) < 60
+                    break
+                end
+                
+                # Parse archive member header
+                name = strip(String(header[1:16]))
+                size_str = strip(String(header[49:58]))
+                
+                if isempty(size_str)
+                    break
+                end
+                
+                member_size = parse(Int, size_str)
+                member_start = position(file)
+                
+                # Check if this member is an object file (ELF)
+                if member_size >= 4
+                    magic = read(file, 4)
+                    seek(file, member_start)  # Reset position
+                    
+                    if magic == [0x7f, 0x45, 0x4c, 0x46]  # ELF magic
+                        # Create temporary file for the ELF object
+                        temp_file = tempname() * ".o"
+                        try
+                            # Extract the ELF object to temp file
+                            member_data = read(file, member_size)
+                            write(temp_file, member_data)
+                            
+                            # Add to temporary files list for later cleanup
+                            push!(linker.temp_files, temp_file)
+                            
+                            # Load the extracted ELF object
+                            if load_elf_object(linker, temp_file)
+                                objects_loaded += 1
+                                println("  → Extracted and loaded: $name")
+                            else
+                                println("  → Failed to load extracted object: $name")
+                            end
+                        catch e
+                            println("  → Error extracting $name: $e")
+                            # Clean up this specific temp file on error
+                            if isfile(temp_file)
+                                rm(temp_file)
+                            end
+                        end
+                    else
+                        # Skip non-ELF member
+                        seek(file, member_start + member_size)
+                    end
+                else
+                    # Skip too small member
+                    seek(file, member_start + member_size)
+                end
+                
+                # Align to even boundary
+                if member_size % 2 == 1
+                    read(file, 1)
+                end
+            end
+        end
+        
+        if objects_loaded > 0
+            println("Loaded archive: $filename ($objects_loaded objects)")
+            return true
+        else
+            println("Failed to load archive $filename: No valid ELF objects found")
+            return false
+        end
+        
+    catch e
+        println("Failed to load archive $filename: $e")
+        return false
+    end
+end
+
+"""
+    cleanup_temp_files!(linker::DynamicLinker)
+
+Clean up all temporary files created during archive extraction.
+"""
+function cleanup_temp_files!(linker::DynamicLinker)
+    for temp_file in linker.temp_files
+        if isfile(temp_file)
+            try
+                rm(temp_file)
+            catch e
+                println("Warning: Failed to cleanup temp file $temp_file: $e")
+            end
+        end
+    end
+    empty!(linker.temp_files)
 end
 
 """
@@ -476,6 +638,9 @@ function link_objects(filenames::Vector{String}; base_address::UInt64 = UInt64(0
     # Perform relocations
     perform_relocations!(linker)
     
+    # Clean up temporary files from archive extraction
+    cleanup_temp_files!(linker)
+    
     println("Linking completed successfully!")
     return linker
 end
@@ -525,6 +690,9 @@ function link_to_executable(filenames::Vector{String}, output_filename::String;
     catch e
         println("Error writing executable: $e")
         return false
+    finally
+        # Ensure cleanup even on errors
+        cleanup_temp_files!(linker)
     end
 end
 
