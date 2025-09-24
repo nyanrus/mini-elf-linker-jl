@@ -102,14 +102,11 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
         min_text_addr = minimum(r.base_address for r in text_regions)
         max_text_addr = maximum(r.base_address + r.size for r in text_regions)
         
-        # First segment includes ELF header and extends to cover text regions
-        # Virtual address should be page-aligned and include headers
-        first_vaddr = min_text_addr & ~0xfff  # Round down to page boundary
-        if first_vaddr > base_addr
-            first_vaddr = base_addr
-        end
+        # First segment should start at the lowest address to include _start and all text regions
+        # This covers both synthetic _start and main code regions
+        first_vaddr = min_text_addr & ~UInt64(0xfff)  # Round down to page boundary (4KB)
         
-        # Calculate total size from headers through text regions
+        # Calculate total size from first address through all text regions
         total_size = max_text_addr - first_vaddr
         
         push!(program_headers, ProgramHeader(

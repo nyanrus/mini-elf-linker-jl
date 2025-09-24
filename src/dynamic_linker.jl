@@ -246,17 +246,29 @@ _start:
 ```
 """
 function inject_c_runtime_startup!(linker::DynamicLinker, main_address::UInt64)
-    # Calculate relative offset from _start to main
-    startup_address = main_address - 0x1000  # Place it 4KB before main
+    # Place startup code BEFORE any existing regions, at the base address
+    base_address = 0x400000
     
-    # Ensure the address doesn't conflict with existing regions
-    while any(r -> r.base_address <= startup_address < r.base_address + r.size, linker.memory_regions)
-        startup_address -= 0x1000
+    # Find the minimum address of existing regions
+    if !isempty(linker.memory_regions)
+        min_existing = minimum(r.base_address for r in linker.memory_regions)
+        # Place _start just before the first region, but still within the base page
+        startup_address = base_address - 0x100  # 256 bytes before base
+    else
+        startup_address = base_address
     end
     
     # Calculate relative call offset (main_address - (startup_address + call_instruction_offset))
     call_instruction_offset = 7  # Position of call instruction within _start
-    rel_offset = Int32(main_address - (startup_address + call_instruction_offset + 5))  # +5 for call instruction size
+    call_target = startup_address + call_instruction_offset + 5  # Address after the call instruction
+    rel_offset_i64 = Int64(main_address) - Int64(call_target)
+    
+    # Verify the offset fits in Int32
+    if abs(rel_offset_i64) > 0x7fffffff
+        error("Relative offset too large: main at 0x$(string(main_address, base=16)), _start at 0x$(string(startup_address, base=16))")
+    end
+    
+    rel_offset = Int32(rel_offset_i64)
     
     # x86-64 assembly code for minimal C runtime startup
     startup_code = UInt8[
@@ -784,7 +796,7 @@ function link_to_executable(filenames::Vector{String}, output_filename::String;
     
     # Write executable
     try
-        write_elf_executable(linker, output_filename; entry_point=entry_point)
+        write_elf_executable(linker, output_filename, entry_point=UInt64(entry_point))
         return true
     catch e
         println("Error writing executable: $e")
