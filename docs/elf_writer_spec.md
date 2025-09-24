@@ -3,18 +3,47 @@
 ## Mathematical Model
 
 ```math
-\text{Domain: } \mathcal{D} = \{\text{Linked objects}, \text{Memory layouts}, \text{Symbol tables}\}
-\text{Range: } \mathcal{R} = \{\text{Binary ELF files}, \text{IO streams}\}
-\text{Mapping: } serialize: \mathcal{D} \to \mathcal{R}
+\text{Domain: } \mathcal{D} = \{\text{Linked objects} \times \text{Memory layouts} \times \text{Symbol tables} \times \text{Entry points}\}
+\text{Range: } \mathcal{R} = \{\text{Binary ELF files} \times \text{IO streams} \times \text{Success status}\}
+\text{Mapping: } \omega: \mathcal{D} \to \mathcal{R}
 ```
+
+**ELF Writer State Space**:
+```math
+\mathcal{W}_{\omega} = \langle \mathcal{L}_{state}, \text{FilePath}, \alpha_{entry} \rangle
+```
+
+where:
+- $\mathcal{L}_{state}$ is the complete linker state with resolved symbols and allocated memory
+- $\text{FilePath}$ is the target executable file path
+- $\alpha_{entry} \in \mathbb{N}_{64}$ is the program entry point address
 
 ## Operations
 
 ```math
-\text{Primary operations: } \{write\_header, create\_program\_headers, layout\_sections, serialize\_data\}
-\text{Invariants: } \{offset\_alignment, size\_consistency, format\_compliance\}
-\text{Complexity bounds: } O(n \log n + s) \text{ where } n,s = \text{sections, total file size}
+\text{Primary operations: } \{\omega_{header}, \omega_{program}, \omega_{layout}, \omega_{serialize}\}
 ```
+
+**Operation Signatures**:
+```math
+\begin{align}
+\omega_{header} &: \text{EntryPoint} \times \text{FileLayout} \to \text{ElfHeader} \\
+\omega_{program} &: \text{List}(\text{MemoryRegion}) \to \text{List}(\text{ProgramHeader}) \\
+\omega_{layout} &: \text{List}(\text{MemoryRegion}) \to \text{FileLayout} \\
+\omega_{serialize} &: \text{ElfStructure} \times \text{FilePath} \to \{0, 1\}
+\end{align}
+```
+
+**Invariants**:
+```math
+\begin{align}
+\text{Format compliance: } &\forall h \in generated\_headers: valid\_elf\_header(h) \\
+\text{Layout consistency: } &\forall p \in program\_headers: p.offset + p.filesz \leq file\_size \\
+\text{Address mapping: } &\forall region: file\_content \mapsto memory\_content
+\end{align}
+```
+
+**Complexity bounds**: $O(n \log n + s)$ where $n = |memory\_regions|$, $s = total\_file\_size$
 
 ## Implementation Correspondence
 
