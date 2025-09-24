@@ -76,6 +76,10 @@ const ELFCLASS64 = 2
 const ELFDATA2LSB = 1  # Little endian
 const EV_CURRENT = 1   # Current version
 
+# OS/ABI types
+const ELFOSABI_SYSV = 0    # UNIX System V ABI
+const ELFOSABI_GNU = 3     # GNU/Linux ABI
+
 # Object file types
 const ET_NONE = 0      # No file type
 const ET_REL = 1       # Relocatable file

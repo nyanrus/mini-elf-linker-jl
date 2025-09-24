@@ -246,16 +246,18 @@ _start:
 ```
 """
 function inject_c_runtime_startup!(linker::DynamicLinker, main_address::UInt64)
-    # Place startup code BEFORE any existing regions, at the base address
-    base_address = 0x400000
+    # Place startup code at a safe location that doesn't conflict with ELF headers
+    # Headers typically end around 0x400000 + 0x200 (512 bytes), so place _start after that
+    base_address = 0x400200  # Start after headers (512 bytes should be enough)
     
-    # Find the minimum address of existing regions
+    # Find a safe location for _start that doesn't conflict with existing regions
+    startup_address = base_address
     if !isempty(linker.memory_regions)
-        min_existing = minimum(r.base_address for r in linker.memory_regions)
-        # Place _start just before the first region, but still within the base page
-        startup_address = base_address - 0x100  # 256 bytes before base
-    else
-        startup_address = base_address
+        # Find the maximum address and place _start after existing regions if needed
+        max_existing = maximum(r.base_address + r.size for r in linker.memory_regions)
+        if max_existing > base_address
+            startup_address = max_existing + 0x10  # Small gap after existing regions
+        end
     end
     
     # Calculate relative call offset (main_address - (startup_address + call_instruction_offset))

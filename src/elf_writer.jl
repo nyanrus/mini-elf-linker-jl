@@ -221,7 +221,7 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
             ELFCLASS64,                 # class
             ELFDATA2LSB,                # data
             EV_CURRENT,                 # version
-            0,                          # osabi (SYSV)
+            ELFOSABI_GNU,               # osabi (GNU/Linux)
             0,                          # abiversion
             (0, 0, 0, 0, 0, 0, 0),     # pad
             ET_EXEC,                    # type - EXEC (Static Executable)
@@ -255,8 +255,6 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
         end
         
         # Write segment data by grouping memory regions
-        # The first LOAD segment contains ELF headers + text regions
-        # We already wrote the headers, so now write the text regions at data_offset
         for (segment_idx, ph) in enumerate(program_headers)
             # Skip non-LOAD segments
             if ph.type != PT_LOAD
@@ -272,36 +270,48 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
             # Sort regions by address
             sort!(segment_regions, by=r -> r.base_address)
             
-            # For the first LOAD segment, write data starting at data_offset
-            # For other segments, write at their specified offset
-            if segment_idx == 1  # First LOAD segment
-                seek(io, data_offset)
-            else
-                seek(io, ph.offset)
-            end
-            
-            # Write all regions in this segment, padding gaps if needed
-            current_addr = ph.vaddr
-            for region in segment_regions
-                # Add padding if there's a gap
-                if region.base_address > current_addr
-                    gap_size = region.base_address - current_addr
-                    for _ in 1:gap_size
-                        write(io, UInt8(0))
+            # For segments, calculate the correct file offset based on virtual address mapping
+            if ph.type == PT_LOAD && ph.vaddr == 0x400000  # First LOAD segment includes ELF headers
+                # For the first LOAD segment, we need to write regions at their correct file offsets
+                # But avoid overwriting the ELF header and program headers
+                headers_end = elf_header_size + length(program_headers) * 56
+                
+                for region in segment_regions
+                    region_file_offset = region.base_address - ph.vaddr  # Offset within segment
+                    
+                    # Only write if the region doesn't overlap with headers
+                    if region_file_offset >= headers_end
+                        seek(io, region_file_offset)
+                        write(io, region.data)
                     end
                 end
+            else
+                # Other segments use their specified file offset
+                seek(io, ph.offset)
                 
-                # Write the region data
-                write(io, region.data)
-                current_addr = region.base_address + region.size
-            end
-            
-            # Pad to end of segment if needed
-            segment_end = ph.vaddr + ph.filesz
-            if current_addr < segment_end
-                remaining = segment_end - current_addr
-                for _ in 1:remaining
-                    write(io, UInt8(0))
+                # Write all regions in this segment, padding gaps if needed
+                current_addr = ph.vaddr
+                for region in segment_regions
+                    # Add padding if there's a gap
+                    if region.base_address > current_addr
+                        gap_size = region.base_address - current_addr
+                        for _ in 1:gap_size
+                            write(io, UInt8(0))
+                        end
+                    end
+                    
+                    # Write the region data
+                    write(io, region.data)
+                    current_addr = region.base_address + region.size
+                end
+                
+                # Pad to end of segment if needed
+                segment_end = ph.vaddr + ph.filesz
+                if current_addr < segment_end
+                    remaining = segment_end - current_addr
+                    for _ in 1:remaining
+                        write(io, UInt8(0))
+                    end
                 end
             end
         end
