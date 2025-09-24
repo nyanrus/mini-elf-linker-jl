@@ -57,42 +57,117 @@ function write_program_header(io::IO, ph::ProgramHeader)
 end
 
 """
-    create_program_headers(linker::DynamicLinker) -> Vector{ProgramHeader}
+    create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, ph_table_size::UInt64) -> Vector{ProgramHeader}
 
-Create program headers for the memory regions in the linker.
+Create proper program headers that include ELF headers in the first LOAD segment.
+
+Mathematical model for proper ELF segment layout:
+```math
+\\begin{align}
+header\\_segment &= \\{ELF\\_header, program\\_headers, text\\_sections\\} \\\\
+rodata\\_segment &= \\{read\\_only\\_sections\\} \\\\
+data\\_segment &= \\{writable\\_sections\\}
+\\end{align}
+```
 """
-function create_program_headers(linker::DynamicLinker)
+function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, ph_table_size::UInt64)
+    if isempty(linker.memory_regions)
+        return ProgramHeader[]
+    end
+    
+    # Group memory regions by permissions
+    text_regions = MemoryRegion[]      # R+X (executable)
+    rodata_regions = MemoryRegion[]    # R (read-only data)
+    data_regions = MemoryRegion[]      # R+W (writable data)
+    
+    for region in linker.memory_regions
+        perms = region.permissions
+        if (perms & 0x4) != 0  # Execute permission - text segment
+            push!(text_regions, region)
+        elseif (perms & 0x2) != 0  # Write permission - data segment  
+            push!(data_regions, region)
+        else  # Read-only - rodata segment
+            push!(rodata_regions, region)
+        end
+    end
+    
     program_headers = ProgramHeader[]
     
-    # Create LOAD segments for each memory region
-    for region in linker.memory_regions
-        flags = 0
-        if region.permissions & 0x1 != 0  # Read
-            flags |= PF_R
-        end
-        if region.permissions & 0x2 != 0  # Write  
-            flags |= PF_W
-        end
-        if region.permissions & 0x4 != 0  # Execute
-            flags |= PF_X
-        end
+    # Calculate base address - should be page-aligned
+    base_addr = 0x400000  # Standard base address
+    headers_size = elf_header_size + ph_table_size + 0x1000  # Add padding
+    
+    # Create first LOAD segment: ELF headers + text regions
+    if !isempty(text_regions)
+        min_text_addr = minimum(r.base_address for r in text_regions)
+        max_text_addr = maximum(r.base_address + r.size for r in text_regions)
         
-        # Calculate file offset (will be updated when writing)
-        file_offset = 0  # Will be set during layout
+        # First segment should start at the lowest address to include _start and all text regions
+        # This covers both synthetic _start and main code regions
+        first_vaddr = min_text_addr & ~UInt64(0xfff)  # Round down to page boundary (4KB)
         
-        ph = ProgramHeader(
+        # Calculate total size from first address through all text regions
+        total_size = max_text_addr - first_vaddr
+        
+        push!(program_headers, ProgramHeader(
             PT_LOAD,                    # type
-            flags,                      # flags
-            file_offset,                # offset (to be filled)
-            region.base_address,        # vaddr
-            region.base_address,        # paddr
-            region.size,                # filesz
-            region.size,                # memsz
-            0x1000                      # align (4KB alignment)
-        )
-        
-        push!(program_headers, ph)
+            PF_R | PF_X,               # flags (Read + Execute) 
+            0,                         # offset (starts at file beginning)
+            first_vaddr,               # vaddr
+            first_vaddr,               # paddr
+            total_size,                # filesz
+            total_size,                # memsz
+            0x1000                     # align (4KB)
+        ))
     end
+    
+    # Create rodata segment (R) if we have read-only regions
+    if !isempty(rodata_regions)
+        min_addr = minimum(r.base_address for r in rodata_regions)
+        max_addr = maximum(r.base_address + r.size for r in rodata_regions)
+        total_size = max_addr - min_addr
+        
+        push!(program_headers, ProgramHeader(
+            PT_LOAD,                    # type
+            PF_R,                      # flags (Read only)
+            0,                         # offset (to be filled)
+            min_addr,                  # vaddr
+            min_addr,                  # paddr
+            total_size,                # filesz
+            total_size,                # memsz
+            0x1000                     # align (4KB)
+        ))
+    end
+    
+    # Create data segment (R+W) if we have writable regions  
+    if !isempty(data_regions)
+        min_addr = minimum(r.base_address for r in data_regions)
+        max_addr = maximum(r.base_address + r.size for r in data_regions)
+        total_size = max_addr - min_addr
+        
+        push!(program_headers, ProgramHeader(
+            PT_LOAD,                    # type
+            PF_R | PF_W,               # flags (Read + Write)
+            0,                         # offset (to be filled)
+            min_addr,                  # vaddr
+            min_addr,                  # paddr
+            total_size,                # filesz
+            total_size,                # memsz
+            0x1000                     # align (4KB)
+        ))
+    end
+    
+    # Add GNU_STACK program header (required for modern Linux executables)
+    push!(program_headers, ProgramHeader(
+        PT_GNU_STACK,               # type
+        PF_R | PF_W,               # flags (Read + Write, no Execute)
+        0,                         # offset (not applicable for GNU_STACK)
+        0,                         # vaddr (not applicable for GNU_STACK)
+        0,                         # paddr (not applicable for GNU_STACK)  
+        0,                         # filesz (not applicable for GNU_STACK)
+        0,                         # memsz (not applicable for GNU_STACK)
+        0x10                       # align (16-byte alignment)
+    ))
     
     return program_headers
 end
@@ -104,12 +179,14 @@ Write an executable ELF file from the linker state.
 """
 function write_elf_executable(linker::DynamicLinker, output_filename::String; entry_point::UInt64 = UInt64(0x401000))
     open(output_filename, "w") do io
-        # Create program headers
-        program_headers = create_program_headers(linker)
-        
         # Calculate layout
         elf_header_size = 64  # ELF64 header size
-        ph_table_size = length(program_headers) * 56  # Program header size is 56 bytes for ELF64
+        # We need to calculate program headers in two passes since we need the count
+        temp_headers = create_program_headers(linker, UInt64(elf_header_size), UInt64(0))
+        ph_table_size = length(temp_headers) * 56  # Program header size is 56 bytes for ELF64
+        
+        # Create program headers with correct sizes
+        program_headers = create_program_headers(linker, UInt64(elf_header_size), UInt64(ph_table_size))
         
         # Calculate data offset (after headers)
         data_offset = elf_header_size + ph_table_size
@@ -121,11 +198,21 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
         # Update program header file offsets
         current_offset = data_offset
         for (i, ph) in enumerate(program_headers)
-            program_headers[i] = ProgramHeader(
-                ph.type, ph.flags, current_offset, ph.vaddr, ph.paddr,
-                ph.filesz, ph.memsz, ph.align
-            )
-            current_offset += ph.filesz
+            if ph.type == PT_LOAD
+                if i == 1  # First LOAD segment starts at offset 0 (includes ELF headers)
+                    program_headers[i] = ProgramHeader(
+                        ph.type, ph.flags, 0, ph.vaddr, ph.paddr,
+                        ph.filesz, ph.memsz, ph.align
+                    )
+                else  # Subsequent LOAD segments start after data
+                    program_headers[i] = ProgramHeader(
+                        ph.type, ph.flags, current_offset, ph.vaddr, ph.paddr,
+                        ph.filesz, ph.memsz, ph.align
+                    )
+                    current_offset += ph.filesz
+                end
+            end
+            # Non-LOAD segments (like GNU_STACK) keep their original offsets
         end
         
         # Create ELF header for executable
@@ -134,10 +221,10 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
             ELFCLASS64,                 # class
             ELFDATA2LSB,                # data
             EV_CURRENT,                 # version
-            0,                          # osabi (SYSV)
+            ELFOSABI_GNU,               # osabi (GNU/Linux)
             0,                          # abiversion
             (0, 0, 0, 0, 0, 0, 0),     # pad
-            ET_EXEC,                    # type - EXECUTABLE
+            ET_EXEC,                    # type - EXEC (Static Executable)
             EM_X86_64,                  # machine
             UInt32(EV_CURRENT),         # version2
             entry_point,                # entry
@@ -167,17 +254,66 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
             write(io, UInt8(0))
         end
         
-        # Write memory region data
-        for (i, region) in enumerate(linker.memory_regions)
-            # Ensure we're at the correct offset
-            expected_pos = program_headers[i].offset
-            current_pos = position(io)
-            if current_pos != expected_pos
-                seek(io, expected_pos)
+        # Write segment data by grouping memory regions
+        for (segment_idx, ph) in enumerate(program_headers)
+            # Skip non-LOAD segments
+            if ph.type != PT_LOAD
+                continue
             end
             
-            # Write the region data
-            write(io, region.data)
+            # Find all memory regions that belong to this segment
+            segment_regions = filter(linker.memory_regions) do region
+                region.base_address >= ph.vaddr && 
+                region.base_address < ph.vaddr + ph.memsz
+            end
+            
+            # Sort regions by address
+            sort!(segment_regions, by=r -> r.base_address)
+            
+            # For segments, calculate the correct file offset based on virtual address mapping
+            if ph.type == PT_LOAD && ph.vaddr == 0x400000  # First LOAD segment includes ELF headers
+                # For the first LOAD segment, we need to write regions at their correct file offsets
+                # But avoid overwriting the ELF header and program headers
+                headers_end = elf_header_size + length(program_headers) * 56
+                
+                for region in segment_regions
+                    region_file_offset = region.base_address - ph.vaddr  # Offset within segment
+                    
+                    # Only write if the region doesn't overlap with headers
+                    if region_file_offset >= headers_end
+                        seek(io, region_file_offset)
+                        write(io, region.data)
+                    end
+                end
+            else
+                # Other segments use their specified file offset
+                seek(io, ph.offset)
+                
+                # Write all regions in this segment, padding gaps if needed
+                current_addr = ph.vaddr
+                for region in segment_regions
+                    # Add padding if there's a gap
+                    if region.base_address > current_addr
+                        gap_size = region.base_address - current_addr
+                        for _ in 1:gap_size
+                            write(io, UInt8(0))
+                        end
+                    end
+                    
+                    # Write the region data
+                    write(io, region.data)
+                    current_addr = region.base_address + region.size
+                end
+                
+                # Pad to end of segment if needed
+                segment_end = ph.vaddr + ph.filesz
+                if current_addr < segment_end
+                    remaining = segment_end - current_addr
+                    for _ in 1:remaining
+                        write(io, UInt8(0))
+                    end
+                end
+            end
         end
     end
     

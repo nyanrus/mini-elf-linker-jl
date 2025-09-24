@@ -42,6 +42,7 @@ mutable struct DynamicLinker
     memory_regions::Vector{MemoryRegion}
     base_address::UInt64
     next_address::UInt64
+    temp_files::Vector{String}  # Track temporary files for cleanup
 end
 
 """
@@ -55,16 +56,50 @@ function DynamicLinker(base_address::UInt64 = UInt64(0x400000))
         Dict{String, Symbol}(),
         MemoryRegion[],
         base_address,
-        base_address
+        base_address,
+        String[]
     )
 end
 
 """
     load_object(linker::DynamicLinker, filename::String) -> Bool
 
-Load an ELF object file into the linker.
+Load an ELF object file or archive file into the linker.
+
+Mathematical model:
+```math
+load_object: (DynamicLinker, File) \\to Bool
+```
+
+Where:
+```math
+load_object(linker, file) = \\begin{cases}
+load_elf(linker, file) & \\text{if } file \\text{ is ELF} \\\\
+load_archive(linker, file) & \\text{if } file \\text{ is archive} \\\\
+false & \\text{otherwise}
+\\end{cases}
+```
 """
 function load_object(linker::DynamicLinker, filename::String)
+    # Detect file type by magic bytes
+    file_type = detect_file_type_by_magic(filename)
+    
+    if file_type == ELF_FILE
+        return load_elf_object(linker, filename)
+    elseif file_type == AR_FILE
+        return load_archive_objects(linker, filename)
+    else
+        println("Failed to load object $filename: Unsupported file type")
+        return false
+    end
+end
+
+"""
+    load_elf_object(linker::DynamicLinker, filename::String) -> Bool
+
+Load a single ELF object file into the linker.
+"""
+function load_elf_object(linker::DynamicLinker, filename::String)
     try
         elf_file = parse_elf_file(filename)
         push!(linker.loaded_objects, elf_file)
@@ -75,9 +110,235 @@ function load_object(linker::DynamicLinker, filename::String)
         println("Loaded object: $filename")
         return true
     catch e
-        println("Failed to load object $filename: $e")
+        println("Failed to load ELF object $filename: $e")
         return false
     end
+end
+
+"""
+    load_archive_objects(linker::DynamicLinker, filename::String) -> Bool
+
+Load all ELF objects from an archive file into the linker.
+
+Mathematical model for archive extraction:
+```math
+archive.a = \\{object_1.o, object_2.o, \\ldots, object_n.o\\}
+```
+
+```math
+load_archive(linker, archive.a) = \\bigwedge_{i=1}^{n} load_elf(linker, object_i.o)
+```
+"""
+function load_archive_objects(linker::DynamicLinker, filename::String)
+    if detect_file_type_by_magic(filename) != AR_FILE
+        println("Failed to load archive $filename: Not an archive file")
+        return false
+    end
+    
+    objects_loaded = 0
+    
+    try
+        open(filename, "r") do file
+            # Skip archive magic
+            seek(file, 8)
+            
+            while !eof(file)
+                # Read archive member header (60 bytes)
+                if position(file) + 60 > filesize(filename)
+                    break
+                end
+                
+                header = read(file, 60)
+                if length(header) < 60
+                    break
+                end
+                
+                # Parse archive member header
+                name = strip(String(header[1:16]))
+                size_str = strip(String(header[49:58]))
+                
+                if isempty(size_str)
+                    break
+                end
+                
+                member_size = parse(Int, size_str)
+                member_start = position(file)
+                
+                # Check if this member is an object file (ELF)
+                if member_size >= 4
+                    magic = read(file, 4)
+                    seek(file, member_start)  # Reset position
+                    
+                    if magic == [0x7f, 0x45, 0x4c, 0x46]  # ELF magic
+                        # Create temporary file for the ELF object
+                        temp_file = tempname() * ".o"
+                        try
+                            # Extract the ELF object to temp file
+                            member_data = read(file, member_size)
+                            write(temp_file, member_data)
+                            
+                            # Add to temporary files list for later cleanup
+                            push!(linker.temp_files, temp_file)
+                            
+                            # Load the extracted ELF object
+                            if load_elf_object(linker, temp_file)
+                                objects_loaded += 1
+                                println("  → Extracted and loaded: $name")
+                            else
+                                println("  → Failed to load extracted object: $name")
+                            end
+                        catch e
+                            println("  → Error extracting $name: $e")
+                            # Clean up this specific temp file on error
+                            if isfile(temp_file)
+                                rm(temp_file)
+                            end
+                        end
+                    else
+                        # Skip non-ELF member
+                        seek(file, member_start + member_size)
+                    end
+                else
+                    # Skip too small member
+                    seek(file, member_start + member_size)
+                end
+                
+                # Align to even boundary
+                if member_size % 2 == 1
+                    read(file, 1)
+                end
+            end
+        end
+        
+        if objects_loaded > 0
+            println("Loaded archive: $filename ($objects_loaded objects)")
+            return true
+        else
+            println("Failed to load archive $filename: No valid ELF objects found")
+            return false
+        end
+        
+    catch e
+        println("Failed to load archive $filename: $e")
+        return false
+    end
+end
+
+"""
+    inject_c_runtime_startup!(linker::DynamicLinker, main_address::UInt64) -> UInt64
+
+Inject a minimal C runtime startup function that properly calls main.
+
+Mathematical model for C runtime initialization:
+```math
+\\text{_start} = align\\_stack \\circ clear\\_frame\\_pointer \\circ call\\_main \\circ exit\\_syscall
+```
+
+Assembly implementation:
+```assembly
+_start:
+    and \$-16, %rsp      # Stack alignment (16-byte boundary)
+    xor %rbp, %rbp      # Clear frame pointer  
+    call main            # Call main function
+    mov %rax, %rdi      # Move return value to exit code
+    mov \$60, %rax       # sys_exit syscall number
+    syscall              # Terminate program
+```
+"""
+function inject_c_runtime_startup!(linker::DynamicLinker, main_address::UInt64)
+    # Place startup code at a safe location that doesn't conflict with ELF headers
+    # Headers typically end around 0x400000 + 0x200 (512 bytes), so place _start after that
+    base_address = 0x400200  # Start after headers (512 bytes should be enough)
+    
+    # Find a safe location for _start that doesn't conflict with existing regions
+    startup_address = base_address
+    if !isempty(linker.memory_regions)
+        # Find the maximum address and place _start after existing regions if needed
+        max_existing = maximum(r.base_address + r.size for r in linker.memory_regions)
+        if max_existing > base_address
+            startup_address = max_existing + 0x10  # Small gap after existing regions
+        end
+    end
+    
+    # Calculate relative call offset (main_address - (startup_address + call_instruction_offset))
+    call_instruction_offset = 7  # Position of call instruction within _start
+    call_target = startup_address + call_instruction_offset + 5  # Address after the call instruction
+    rel_offset_i64 = Int64(main_address) - Int64(call_target)
+    
+    # Verify the offset fits in Int32
+    if abs(rel_offset_i64) > 0x7fffffff
+        error("Relative offset too large: main at 0x$(string(main_address, base=16)), _start at 0x$(string(startup_address, base=16))")
+    end
+    
+    rel_offset = Int32(rel_offset_i64)
+    
+    # x86-64 assembly code for minimal C runtime startup
+    startup_code = UInt8[
+        # xor %rbp, %rbp  (clear frame pointer)  
+        0x48, 0x31, 0xed,
+        
+        # and $-16, %rsp  (align stack to 16-byte boundary)
+        0x48, 0x83, 0xe4, 0xf0,
+        
+        # call main (relative call)
+        0xe8,
+        (rel_offset >>  0) & 0xff, (rel_offset >>  8) & 0xff,
+        (rel_offset >> 16) & 0xff, (rel_offset >> 24) & 0xff,
+        
+        # mov %rax, %rdi  (move return value to exit code)
+        0x48, 0x89, 0xc7,
+        
+        # mov $60, %rax  (sys_exit syscall number)
+        0x48, 0xc7, 0xc0, 0x3c, 0x00, 0x00, 0x00,
+        
+        # syscall  (terminate program)
+        0x0f, 0x05
+    ]
+    
+    # Create memory region for startup code
+    startup_region = MemoryRegion(
+        startup_code,           # data
+        startup_address,        # base_address  
+        length(startup_code),   # size
+        0x5                     # permissions: read + execute
+    )
+    
+    # Add to linker's memory regions
+    push!(linker.memory_regions, startup_region)
+    
+    # Add _start symbol to global symbol table
+    startup_symbol = Symbol(
+        "_start",               # name
+        startup_address,        # value
+        length(startup_code),   # size
+        1,                      # binding (global)
+        2,                      # type (function)  
+        0,                      # section
+        true,                   # defined
+        "synthetic"             # source_file
+    )
+    
+    linker.global_symbol_table["_start"] = startup_symbol
+    
+    return startup_address
+end
+
+"""
+    cleanup_temp_files!(linker::DynamicLinker)
+
+Clean up all temporary files created during archive extraction.
+"""
+function cleanup_temp_files!(linker::DynamicLinker)
+    for temp_file in linker.temp_files
+        if isfile(temp_file)
+            try
+                rm(temp_file)
+            catch e
+                println("Warning: Failed to cleanup temp file $temp_file: $e")
+            end
+        end
+    end
+    empty!(linker.temp_files)
 end
 
 """
@@ -476,6 +737,9 @@ function link_objects(filenames::Vector{String}; base_address::UInt64 = UInt64(0
     # Perform relocations
     perform_relocations!(linker)
     
+    # Clean up temporary files from archive extraction
+    cleanup_temp_files!(linker)
+    
     println("Linking completed successfully!")
     return linker
 end
@@ -504,13 +768,27 @@ function link_to_executable(filenames::Vector{String}, output_filename::String;
                          library_search_paths=library_search_paths,
                          library_names=library_names)
     
-    # Find entry point
+    # Find entry point - prefer _start if available, otherwise use main with C runtime setup
     entry_point = base_address + 0x1000  # Default entry point
-    if haskey(linker.global_symbol_table, entry_symbol)
-        entry_symbol_info = linker.global_symbol_table[entry_symbol]
+    
+    # Check if we have _start symbol (proper C runtime)
+    if haskey(linker.global_symbol_table, "_start")
+        entry_symbol_info = linker.global_symbol_table["_start"]
         if entry_symbol_info.defined
             entry_point = entry_symbol_info.value
-            println("Entry point set to '$entry_symbol' at 0x$(string(entry_point, base=16))")
+            println("Entry point set to '_start' at 0x$(string(entry_point, base=16))")
+        else
+            println("Warning: _start symbol is not defined")
+        end
+    elseif haskey(linker.global_symbol_table, entry_symbol)
+        # We have main but no _start - need to inject C runtime initialization
+        entry_symbol_info = linker.global_symbol_table[entry_symbol]
+        if entry_symbol_info.defined
+            main_address = entry_symbol_info.value
+            # Inject a minimal _start function that calls main properly
+            entry_point = inject_c_runtime_startup!(linker, main_address)
+            println("Entry point set to synthetic '_start' at 0x$(string(entry_point, base=16))")
+            println("  → Will call '$entry_symbol' at 0x$(string(main_address, base=16))")
         else
             println("Warning: Entry symbol '$entry_symbol' is not defined, using default entry point")
         end
@@ -520,11 +798,14 @@ function link_to_executable(filenames::Vector{String}, output_filename::String;
     
     # Write executable
     try
-        write_elf_executable(linker, output_filename; entry_point=entry_point)
+        write_elf_executable(linker, output_filename, entry_point=UInt64(entry_point))
         return true
     catch e
         println("Error writing executable: $e")
         return false
+    finally
+        # Ensure cleanup even on errors
+        cleanup_temp_files!(linker)
     end
 end
 

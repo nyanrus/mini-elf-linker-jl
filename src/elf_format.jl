@@ -76,6 +76,10 @@ const ELFCLASS64 = 2
 const ELFDATA2LSB = 1  # Little endian
 const EV_CURRENT = 1   # Current version
 
+# OS/ABI types
+const ELFOSABI_SYSV = 0    # UNIX System V ABI
+const ELFOSABI_GNU = 3     # GNU/Linux ABI
+
 # Object file types
 const ET_NONE = 0      # No file type
 const ET_REL = 1       # Relocatable file
@@ -126,6 +130,7 @@ const PT_NOTE = 4           # Note information
 const PT_SHLIB = 5          # Reserved
 const PT_PHDR = 6           # Program header table
 const PT_TLS = 7            # Thread-local storage
+const PT_GNU_STACK = 0x6474e551  # GNU stack permissions
 
 # Program header flags
 const PF_X = 0x1            # Execute
