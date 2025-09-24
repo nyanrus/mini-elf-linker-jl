@@ -195,7 +195,7 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
             0,                          # osabi (SYSV)
             0,                          # abiversion
             (0, 0, 0, 0, 0, 0, 0),     # pad
-            ET_DYN,                     # type - DYN (Position-Independent Executable)
+            ET_EXEC,                    # type - EXEC (Static Executable)
             EM_X86_64,                  # machine
             UInt32(EV_CURRENT),         # version2
             entry_point,                # entry

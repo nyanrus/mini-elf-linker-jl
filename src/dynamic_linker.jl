@@ -225,6 +225,91 @@ function load_archive_objects(linker::DynamicLinker, filename::String)
 end
 
 """
+    inject_c_runtime_startup!(linker::DynamicLinker, main_address::UInt64) -> UInt64
+
+Inject a minimal C runtime startup function that properly calls main.
+
+Mathematical model for C runtime initialization:
+```math
+\\text{_start} = align\\_stack \\circ clear\\_frame\\_pointer \\circ call\\_main \\circ exit\\_syscall
+```
+
+Assembly implementation:
+```assembly
+_start:
+    and \$-16, %rsp      # Stack alignment (16-byte boundary)
+    xor %rbp, %rbp      # Clear frame pointer  
+    call main            # Call main function
+    mov %rax, %rdi      # Move return value to exit code
+    mov \$60, %rax       # sys_exit syscall number
+    syscall              # Terminate program
+```
+"""
+function inject_c_runtime_startup!(linker::DynamicLinker, main_address::UInt64)
+    # Calculate relative offset from _start to main
+    startup_address = main_address - 0x1000  # Place it 4KB before main
+    
+    # Ensure the address doesn't conflict with existing regions
+    while any(r -> r.base_address <= startup_address < r.base_address + r.size, linker.memory_regions)
+        startup_address -= 0x1000
+    end
+    
+    # Calculate relative call offset (main_address - (startup_address + call_instruction_offset))
+    call_instruction_offset = 7  # Position of call instruction within _start
+    rel_offset = Int32(main_address - (startup_address + call_instruction_offset + 5))  # +5 for call instruction size
+    
+    # x86-64 assembly code for minimal C runtime startup
+    startup_code = UInt8[
+        # xor %rbp, %rbp  (clear frame pointer)  
+        0x48, 0x31, 0xed,
+        
+        # and $-16, %rsp  (align stack to 16-byte boundary)
+        0x48, 0x83, 0xe4, 0xf0,
+        
+        # call main (relative call)
+        0xe8,
+        (rel_offset >>  0) & 0xff, (rel_offset >>  8) & 0xff,
+        (rel_offset >> 16) & 0xff, (rel_offset >> 24) & 0xff,
+        
+        # mov %rax, %rdi  (move return value to exit code)
+        0x48, 0x89, 0xc7,
+        
+        # mov $60, %rax  (sys_exit syscall number)
+        0x48, 0xc7, 0xc0, 0x3c, 0x00, 0x00, 0x00,
+        
+        # syscall  (terminate program)
+        0x0f, 0x05
+    ]
+    
+    # Create memory region for startup code
+    startup_region = MemoryRegion(
+        startup_code,           # data
+        startup_address,        # base_address  
+        length(startup_code),   # size
+        0x5                     # permissions: read + execute
+    )
+    
+    # Add to linker's memory regions
+    push!(linker.memory_regions, startup_region)
+    
+    # Add _start symbol to global symbol table
+    startup_symbol = Symbol(
+        "_start",               # name
+        startup_address,        # value
+        length(startup_code),   # size
+        1,                      # binding (global)
+        2,                      # type (function)  
+        0,                      # section
+        true,                   # defined
+        "synthetic"             # source_file
+    )
+    
+    linker.global_symbol_table["_start"] = startup_symbol
+    
+    return startup_address
+end
+
+"""
     cleanup_temp_files!(linker::DynamicLinker)
 
 Clean up all temporary files created during archive extraction.
@@ -669,13 +754,27 @@ function link_to_executable(filenames::Vector{String}, output_filename::String;
                          library_search_paths=library_search_paths,
                          library_names=library_names)
     
-    # Find entry point
+    # Find entry point - prefer _start if available, otherwise use main with C runtime setup
     entry_point = base_address + 0x1000  # Default entry point
-    if haskey(linker.global_symbol_table, entry_symbol)
-        entry_symbol_info = linker.global_symbol_table[entry_symbol]
+    
+    # Check if we have _start symbol (proper C runtime)
+    if haskey(linker.global_symbol_table, "_start")
+        entry_symbol_info = linker.global_symbol_table["_start"]
         if entry_symbol_info.defined
             entry_point = entry_symbol_info.value
-            println("Entry point set to '$entry_symbol' at 0x$(string(entry_point, base=16))")
+            println("Entry point set to '_start' at 0x$(string(entry_point, base=16))")
+        else
+            println("Warning: _start symbol is not defined")
+        end
+    elseif haskey(linker.global_symbol_table, entry_symbol)
+        # We have main but no _start - need to inject C runtime initialization
+        entry_symbol_info = linker.global_symbol_table[entry_symbol]
+        if entry_symbol_info.defined
+            main_address = entry_symbol_info.value
+            # Inject a minimal _start function that calls main properly
+            entry_point = inject_c_runtime_startup!(linker, main_address)
+            println("Entry point set to synthetic '_start' at 0x$(string(entry_point, base=16))")
+            println("  → Will call '$entry_symbol' at 0x$(string(main_address, base=16))")
         else
             println("Warning: Entry symbol '$entry_symbol' is not defined, using default entry point")
         end
