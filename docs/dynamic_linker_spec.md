@@ -3,55 +3,117 @@
 ## Mathematical Model
 
 ```math
-\text{Domain: } \mathcal{D} = \{\text{ELF objects}, \text{Symbol tables}, \text{Memory layouts}\}
-\text{Range: } \mathcal{R} = \{\text{Linked executables}, \text{Resolved symbols}, \text{Memory mappings}\}
-\text{Mapping: } link: \mathcal{D} \to \mathcal{R}
+\text{Domain: } \mathcal{D} = \{\text{ELF objects} \times \text{Symbol tables} \times \text{Memory layouts} \times \text{Relocation entries}\}
+\text{Range: } \mathcal{R} = \{\text{Linked executables} \times \text{Resolved symbols} \times \text{Memory mappings}\}
+\text{Mapping: } \Delta: \mathcal{D} \to \mathcal{R}
 ```
+
+**Dynamic Linker State Space**:
+```math
+\mathcal{S}_{\Delta} = \langle \mathcal{O}, \Sigma, \mathcal{M}, \mathcal{R}, \alpha_{base}, \alpha_{next} \rangle
+```
+
+where:
+- $\mathcal{O} = \{o_i\}_{i=1}^n$ is the set of loaded ELF objects
+- $\Sigma: \text{String} \to \text{Symbol}$ is the global symbol table mapping
+- $\mathcal{M} = \{m_j\}_{j=1}^k$ is the set of allocated memory regions
+- $\mathcal{R} = \{r_l\}_{l=1}^p$ is the set of relocation entries
+- $\alpha_{base}, \alpha_{next} \in \mathbb{N}_{64}$ are address space boundaries
 
 ## Operations
 
 ```math
-\text{Primary operations: } \{resolve\_symbols, load\_objects, apply\_relocations, allocate\_memory\}
-\text{Invariants: } \{symbol\_uniqueness, memory\_non\_overlap, address\_valid\}
-\text{Complexity bounds: } O(n \cdot m + r) \text{ where } n,m,r = \text{symbols, objects, relocations}
+\text{Primary operations: } \{\delta_{resolve}, \delta_{load}, \delta_{relocate}, \delta_{allocate}\}
 ```
+
+**Operation Signatures**:
+```math
+\begin{align}
+\delta_{load} &: \text{ElfFile} \times \mathcal{S}_{\Delta} \to \mathcal{S}_{\Delta}' \\
+\delta_{resolve} &: \mathcal{S}_{\Delta} \to \mathcal{S}_{\Delta}' \times \mathcal{U} \\
+\delta_{allocate} &: \mathcal{S}_{\Delta} \to \mathcal{S}_{\Delta}' \\
+\delta_{relocate} &: \mathcal{S}_{\Delta} \to \mathcal{S}_{\Delta}'
+\end{align}
+```
+
+where $\mathcal{U}$ is the set of unresolved symbols.
+
+**Invariants**:
+```math
+\begin{align}
+\text{Symbol uniqueness: } &\forall s_1, s_2 \in \Sigma: s_1.name = s_2.name \implies s_1.address = s_2.address \\
+\text{Memory safety: } &\forall m_i, m_j \in \mathcal{M}: i \neq j \implies disjoint(m_i, m_j) \\
+\text{Address validity: } &\forall a \in addresses: \alpha_{base} \leq a < \alpha_{next}
+\end{align}
+```
+
+**Complexity bounds**: $O(|\mathcal{O}| \cdot |\Sigma| + |\mathcal{R}|)$
 
 ## Implementation Correspondence
 
 ### Symbol Resolution → `resolve_symbols` function
 
 ```math
-resolve: DynamicLinker \to DynamicLinker \cup \{Error\}
+\delta_{resolve}: \mathcal{S}_{\Delta} \to \mathcal{S}_{\Delta}' \times \mathcal{U}
 ```
 
-**Mathematical operation**: Symbol table lookup and binding resolution
+**Mathematical operation**: Global symbol table construction with binding resolution
 
 ```math
-lookup\_symbol(name, tables) = \begin{cases}
-address & \text{if } name \in global\_symbols \\
-weak\_default & \text{if } name \in weak\_symbols \\
-error & \text{if } name \text{ unresolved and strong}
+\Sigma'(name) = \begin{cases}
+\text{address}(def) & \text{if } \exists def \in \bigcup_{o \in \mathcal{O}} symbols(o): def.name = name \land defined(def) \\
+0 & \text{if } binding(name) = STB\_WEAK \land \neg\exists def \\
+\bot & \text{if } binding(name) = STB\_STRONG \land \neg\exists def
 \end{cases}
+```
+
+**Symbol binding precedence ordering**:
+```math
+STB\_GLOBAL \succ STB\_WEAK \succ STB\_LOCAL
 ```
 
 **Direct code correspondence**:
 ```julia
-# Mathematical model: resolve: DynamicLinker → DynamicLinker ∪ {Error}
-function resolve_symbols(linker::DynamicLinker)::DynamicLinker
-    # Implementation of: symbol table lookup with binding priority
-    for symbol in get_undefined_symbols(linker)     # ↔ undefined symbol iteration
-        definition = lookup_global(symbol.name)     # ↔ global table lookup
-        if definition !== nothing
-            symbol.address = definition.address     # ↔ address assignment
-            symbol.resolved = true                  # ↔ state update
-        elseif symbol.binding == STB_WEAK
-            symbol.address = 0                      # ↔ weak default handling
-            symbol.resolved = true
-        else
-            error("Unresolved strong symbol: $(symbol.name)")  # ↔ error condition
+# Mathematical model: δ_resolve: S_Δ → S_Δ' × U
+function resolve_symbols(linker::DynamicLinker)::Vector{String}
+    # Implementation of: Σ'(name) construction with binding precedence
+    unresolved_symbols = String[]                           # ↔ U initialization
+    
+    for (symbol_name, symbol) in linker.global_symbol_table  # ↔ Σ iteration
+        if !symbol.defined                                  # ↔ ¬defined(symbol)
+            # Search in loaded objects: ⋃_{o ∈ O} symbols(o)
+            found_definition = nothing
+            for obj in linker.loaded_objects                # ↔ object iteration
+                for obj_symbol in obj.symbols               # ↔ symbol search
+                    obj_symbol_name = get_string_from_table(obj.symbol_string_table, obj_symbol.name)
+                    if obj_symbol_name == symbol_name && obj_symbol.section != 0  # ↔ defined check
+                        found_definition = obj_symbol       # ↔ definition found
+                        break
+                    end
+                end
+                found_definition !== nothing && break
+            end
+            
+            if found_definition !== nothing
+                # Update symbol with definition: Σ'(name) = address(def)
+                updated_symbol = Symbol(
+                    symbol_name, found_definition.value, found_definition.size,
+                    found_definition.binding, found_definition.type, found_definition.section,
+                    true, symbol.source_file                # ↔ defined = true
+                )
+                linker.global_symbol_table[symbol_name] = updated_symbol
+            elseif symbol.binding == STB_WEAK               # ↔ weak binding check
+                # Weak symbol default: Σ'(name) = 0
+                weak_symbol = Symbol(symbol_name, 0, 0, STB_WEAK, symbol.type, 0, true, "weak_default")
+                linker.global_symbol_table[symbol_name] = weak_symbol
+            else
+                # Strong unresolved: symbol ∈ U
+                push!(unresolved_symbols, symbol_name)     # ↔ add to unresolved set
+            end
         end
     end
-    return linker
+    
+    return unresolved_symbols                               # ↔ U result
 end
 ```
 

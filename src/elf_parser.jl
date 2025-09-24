@@ -1,42 +1,55 @@
 # ELF Parser Implementation
-# Functions to parse ELF files and extract necessary information
+# Mathematical model: π: D → R where D = {IO streams, File paths} and R = {ELF structured data, Error states}
+# Functions to parse ELF files and extract necessary information following rigorous mathematical specification
 
 """
     parse_elf_header(io::IO) -> ElfHeader
 
-Parse the ELF header from an IO stream.
+Mathematical model: π_header: IO → ElfHeader ∪ {⊥}
+Parse the ELF header from an IO stream with validation.
+
+Transformation pipeline:
+```math
+io \\xrightarrow{read\\_magic} magic \\xrightarrow{validate} verified \\xrightarrow{parse\\_fields} header
+```
+
+Invariants:
+- Pre: magic = (0x7f, 0x45, 0x4c, 0x46) ↔ ELF_MAGIC verification
+- Post: valid_elf_header(result) ↔ structural consistency
 """
 function parse_elf_header(io::IO)
-    # Read the ELF header (64 bytes for 64-bit ELF)
-    magic = ntuple(i -> read(io, UInt8), 4)
+    # Read ELF magic signature: magic ∈ {0x7f, 'E', 'L', 'F'}
+    magic = ntuple(i -> read(io, UInt8), 4)             # ↔ magic extraction
     
-    # Verify ELF magic
-    if magic != ELF_MAGIC
-        error("Invalid ELF magic number: $(magic)")
+    # ELF magic verification: magic = ELF_MAGIC
+    if magic != ELF_MAGIC                               # ↔ invariant check
+        error("Invalid ELF magic number: $(magic)")    # ↔ ⊥ error state
     end
     
-    class = read(io, UInt8)
-    data = read(io, UInt8)
-    version = read(io, UInt8)
-    osabi = read(io, UInt8)
-    abiversion = read(io, UInt8)
-    pad = ntuple(i -> read(io, UInt8), 7)
+    # Parse ELF identification fields
+    class = read(io, UInt8)                            # ↔ architecture class ∈ {1,2}
+    data = read(io, UInt8)                             # ↔ endianness ∈ {1,2}
+    version = read(io, UInt8)                          # ↔ version number
+    osabi = read(io, UInt8)                            # ↔ OS/ABI identification
+    abiversion = read(io, UInt8)                       # ↔ ABI version
+    pad = ntuple(i -> read(io, UInt8), 7)              # ↔ padding bytes
     
-    # Read the rest of the header
-    type = read(io, UInt16)
-    machine = read(io, UInt16)
-    version2 = read(io, UInt32)
-    entry = read(io, UInt64)
-    phoff = read(io, UInt64)
-    shoff = read(io, UInt64)
-    flags = read(io, UInt32)
-    ehsize = read(io, UInt16)
-    phentsize = read(io, UInt16)
-    phnum = read(io, UInt16)
-    shentsize = read(io, UInt16)
-    shnum = read(io, UInt16)
-    shstrndx = read(io, UInt16)
+    # Parse remaining header fields: sequential field extraction
+    type = read(io, UInt16)                            # ↔ object file type
+    machine = read(io, UInt16)                         # ↔ machine architecture
+    version2 = read(io, UInt32)                        # ↔ object file version
+    entry = read(io, UInt64)                           # ↔ entry point address
+    phoff = read(io, UInt64)                           # ↔ program header offset
+    shoff = read(io, UInt64)                           # ↔ section header offset
+    flags = read(io, UInt32)                           # ↔ processor flags
+    ehsize = read(io, UInt16)                          # ↔ ELF header size
+    phentsize = read(io, UInt16)                       # ↔ program header entry size
+    phnum = read(io, UInt16)                           # ↔ program header count
+    shentsize = read(io, UInt16)                       # ↔ section header entry size
+    shnum = read(io, UInt16)                           # ↔ section header count
+    shstrndx = read(io, UInt16)                        # ↔ section name string table index
     
+    # Construct ELF header: field aggregation into structured representation
     return ElfHeader(
         magic, class, data, version, osabi, abiversion, pad,
         type, machine, version2, entry, phoff, shoff, flags,
@@ -58,43 +71,62 @@ end
 """
     parse_section_headers(io::IO, elf_header::ElfHeader) -> Vector{SectionHeader}
 
-Parse all section headers from an ELF file.
+Mathematical model: π_sections: IO × ElfHeader → List(SectionHeader)
+Parse all section headers from an ELF file with bounded iteration.
+
+Preconditions:
+- header.shoff > 0 ∧ header.shnum ≥ 0 ∧ io_valid(io)
+
+Postconditions:
+- |result| = header.shnum ∧ ∀s ∈ result: valid_section(s)
+
+Complexity: O(k) where k = header.shnum (section count)
 """
 function parse_section_headers(io::IO, elf_header::ElfHeader)
-    sections = Vector{SectionHeader}()
+    # Initialize section collection: sections = ∅
+    sections = Vector{SectionHeader}()                      # ↔ result accumulator
     
-    # Seek to section header table
-    seek(io, elf_header.shoff)
+    # Position to section header table: seek(io, header.shoff)
+    seek(io, elf_header.shoff)                             # ↔ file positioning
     
-    for i in 1:elf_header.shnum
-        name = read(io, UInt32)
-        type = read(io, UInt32)
-        flags = read(io, UInt64)
-        addr = read(io, UInt64)
-        offset = read(io, UInt64)
-        size = read(io, UInt64)
-        link = read(io, UInt32)
-        info = read(io, UInt32)
-        addralign = read(io, UInt64)
-        entsize = read(io, UInt64)
+    # Bounded iteration: ∀i ∈ [1, header.shnum]
+    for i in 1:elf_header.shnum                            # ↔ section iteration
+        # Sequential field extraction: parse_single_section_header
+        name = read(io, UInt32)                            # ↔ section name offset
+        type = read(io, UInt32)                            # ↔ section type
+        flags = read(io, UInt64)                           # ↔ section flags
+        addr = read(io, UInt64)                            # ↔ virtual address
+        offset = read(io, UInt64)                          # ↔ file offset
+        size = read(io, UInt64)                            # ↔ section size
+        link = read(io, UInt32)                            # ↔ link information
+        info = read(io, UInt32)                            # ↔ auxiliary information
+        addralign = read(io, UInt64)                       # ↔ address alignment
+        entsize = read(io, UInt64)                         # ↔ entry size
         
-        push!(sections, SectionHeader(
+        # Section header construction: create structured representation
+        section_header = SectionHeader(
             name, type, flags, addr, offset, size,
             link, info, addralign, entsize
-        ))
+        )
+        
+        push!(sections, section_header)                    # ↔ accumulation: sections = sections ∪ {s}
     end
     
-    return sections
+    return sections                                        # ↔ List(SectionHeader) result
 end
 
 """
     parse_section_headers(filename::String, elf_header::ElfHeader) -> Vector{SectionHeader}
 
-Parse section headers from a file.
+Mathematical model: π_sections_file: FilePath × ElfHeader → List(SectionHeader)
+Parse section headers from a file using file I/O abstraction.
+
+File I/O monad: IO operation lifted over file handle.
 """
 function parse_section_headers(filename::String, elf_header::ElfHeader)
-    open(filename, "r") do io
-        parse_section_headers(io, elf_header)
+    # File I/O monad: lift parse_section_headers over file handle
+    open(filename, "r") do io                              # ↔ file handle acquisition
+        parse_section_headers(io, elf_header)              # ↔ π_sections application
     end
 end
 

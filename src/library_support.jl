@@ -1,17 +1,37 @@
 # Library Support for glibc and musl libc
-# Provides functionality to detect and link against system libraries
+# Mathematical model: λ: P × N → L where P = search paths, N = library names, L = library info
+# Provides functionality to detect and link against system libraries following rigorous mathematical specification
 
 """
     LibraryType
 
-Enum representing different library types.
+Mathematical model: LibraryType ∈ {GLIBC, MUSL, STATIC, SHARED, UNKNOWN}
+Enum representing different library classification types in the library universe.
+
+Library type classification:
+```math
+classify: LibraryPath → LibraryType
+```
 """
 @enum LibraryType GLIBC MUSL STATIC SHARED UNKNOWN
 
 """
     LibraryInfo
 
-Information about a detected library.
+Mathematical model: LibraryInfo ∈ L where L = {LibraryInfo}
+Information structure representing a detected library with complete metadata.
+
+Library information tuple:
+```math
+LibraryInfo = ⟨type, path, name, version, symbols⟩
+```
+
+Fields:
+- type ∈ LibraryType: library classification
+- path ∈ String: absolute file system path
+- name ∈ String: canonical library name (e.g., "c" for libc)
+- version ∈ String: version identifier
+- symbols ∈ Set{String}: available symbol set Σ_lib
 """
 struct LibraryInfo
     type::LibraryType
@@ -24,30 +44,44 @@ end
 """
     detect_library_type(library_path::String) -> LibraryType
 
-Detect the type of library at the given path using magic bytes.
+Mathematical model: classify: LibraryPath → LibraryType
+Detect the type of library at the given path using magic byte analysis.
+
+Classification function:
+```math
+classify(path) = \\begin{cases}
+STATIC & \\text{if } magic(path) = AR\\_MAGIC \\\\
+GLIBC & \\text{if } magic(path) = ELF\\_MAGIC \\land is\\_libc(path) \\land detect\\_libc\\_type(path) = GLIBC \\\\
+MUSL & \\text{if } magic(path) = ELF\\_MAGIC \\land is\\_libc(path) \\land detect\\_libc\\_type(path) = MUSL \\\\
+SHARED & \\text{if } magic(path) = ELF\\_MAGIC \\land \\neg is\\_libc(path) \\\\
+UNKNOWN & \\text{otherwise}
+\\end{cases}
+```
 """
 function detect_library_type(library_path::String)
-    if !isfile(library_path)
-        return UNKNOWN
+    # File existence check: path ∈ filesystem
+    if !isfile(library_path)                               # ↔ ¬exists(path)
+        return UNKNOWN                                     # ↔ classification failure
     end
     
-    file_type = detect_file_type_by_magic(library_path)
+    # Magic byte classification: magic(path) → file_type
+    file_type = detect_file_type_by_magic(library_path)    # ↔ magic analysis
     
-    if file_type == AR_FILE
-        return STATIC
-    elseif file_type == ELF_FILE
-        # For ELF files, determine if it's glibc/musl or regular shared library
-        elf_header = parse_native_elf_header(library_path)
+    if file_type == AR_FILE                                # ↔ AR_MAGIC match
+        return STATIC                                      # ↔ static library classification
+    elseif file_type == ELF_FILE                          # ↔ ELF_MAGIC match
+        # ELF header analysis: parse ELF structure
+        elf_header = parse_native_elf_header(library_path) # ↔ ELF structure extraction
         if elf_header !== nothing
-            if elf_header.type == ET_DYN  # Shared object
-                # Check if it's libc specifically
+            if elf_header.type == ET_DYN                   # ↔ shared object check
+                # libc detection: filename pattern matching
                 filename = basename(library_path)
-                if occursin(r"libc\.so", filename)
-                    return detect_libc_type(library_path)
+                if occursin(r"libc\.so", filename)         # ↔ is_libc(path) = true
+                    return detect_libc_type(library_path)  # ↔ GLIBC/MUSL classification
                 else
-                    return SHARED
+                    return SHARED                          # ↔ general shared library
                 end
-            elseif elf_header.type == ET_REL  # Relocatable object
+            elseif elf_header.type == ET_REL               # ↔ relocatable object
                 return SHARED  # Treat relocatable objects as shared for now
             end
         end

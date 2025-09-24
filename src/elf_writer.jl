@@ -1,43 +1,50 @@
 # ELF Writer Implementation
-# Functions to write ELF executable files from linked objects
+# Mathematical model: ω: D → R where D = Linked objects × Memory layouts × Entry points
+# Functions to write ELF executable files from linked objects following rigorous mathematical specification
 
 """
     write_elf_header(io::IO, header::ElfHeader)
 
-Write an ELF header to an IO stream.
+Mathematical model: ω_header_write: IO × ElfHeader → IO
+Write an ELF header to an IO stream with sequential field serialization.
+
+Serialization mapping: header_fields ↦ binary_representation
+Each field f ∈ header mapped to write(io, f) operation.
 """
 function write_elf_header(io::IO, header::ElfHeader)
-    # Write magic
-    for b in header.magic
+    # Sequential field serialization: ∀f ∈ header_fields: write(io, f)
+    
+    # ELF magic signature: magic = (0x7f, 'E', 'L', 'F')
+    for b in header.magic                                   # ↔ magic serialization
         write(io, b)
     end
     
-    # Write ELF identification
-    write(io, header.class)
-    write(io, header.data)
-    write(io, header.version)
-    write(io, header.osabi)
-    write(io, header.abiversion)
+    # ELF identification fields: sequential byte writing
+    write(io, header.class)                                # ↔ architecture class
+    write(io, header.data)                                 # ↔ endianness specification
+    write(io, header.version)                              # ↔ version number
+    write(io, header.osabi)                                # ↔ OS/ABI identification
+    write(io, header.abiversion)                           # ↔ ABI version
     
-    # Write padding
-    for b in header.pad
+    # Padding bytes: maintain header structure alignment
+    for b in header.pad                                    # ↔ padding serialization
         write(io, b)
     end
     
-    # Write rest of header
-    write(io, header.type)
-    write(io, header.machine)
-    write(io, header.version2)
-    write(io, header.entry)
-    write(io, header.phoff)
-    write(io, header.shoff)
-    write(io, header.flags)
-    write(io, header.ehsize)
-    write(io, header.phentsize)
-    write(io, header.phnum)
-    write(io, header.shentsize)
-    write(io, header.shnum)
-    write(io, header.shstrndx)
+    # Core header fields: structured data serialization
+    write(io, header.type)                                 # ↔ object file type
+    write(io, header.machine)                              # ↔ machine architecture
+    write(io, header.version2)                             # ↔ object file version
+    write(io, header.entry)                                # ↔ α_entry entry point
+    write(io, header.phoff)                                # ↔ program header offset
+    write(io, header.shoff)                                # ↔ section header offset
+    write(io, header.flags)                                # ↔ processor flags
+    write(io, header.ehsize)                               # ↔ ELF header size
+    write(io, header.phentsize)                            # ↔ program header entry size
+    write(io, header.phnum)                                # ↔ program header count
+    write(io, header.shentsize)                            # ↔ section header entry size
+    write(io, header.shnum)                                # ↔ section header count
+    write(io, header.shstrndx)                             # ↔ string table index
 end
 
 """
