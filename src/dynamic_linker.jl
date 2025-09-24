@@ -1,12 +1,24 @@
 # Dynamic Linker Implementation
-# Core functionality for linking ELF objects
+# Mathematical model: Δ: D → R where D = ELF objects × Symbol tables × Memory layouts
+# Core functionality for linking ELF objects following rigorous mathematical specification
 
 using Printf
 
 """
     Symbol
 
-Represents a symbol in the linker's symbol table.
+Mathematical model: Symbol ∈ Σ where Σ: String → Symbol
+Represents a symbol in the linker's global symbol table.
+
+Fields correspond to mathematical symbol properties:
+- name ∈ String: symbol identifier in global namespace
+- value ∈ ℕ₆₄: memory address or offset  
+- size ∈ ℕ₆₄: symbol memory footprint
+- binding ∈ {STB_LOCAL, STB_GLOBAL, STB_WEAK}: symbol visibility
+- type ∈ {STT_NOTYPE, STT_OBJECT, STT_FUNC, ...}: symbol classification
+- section ∈ ℕ₁₆: containing section index
+- defined ∈ {true, false}: definition availability
+- source_file ∈ String: originating object file
 """
 struct Symbol
     name::String
@@ -22,7 +34,15 @@ end
 """
     MemoryRegion
 
-Represents a memory region for loaded sections.
+Mathematical model: m ∈ M where M = {m_j}_{j=1}^k
+Represents a memory region for loaded sections with non-overlap constraint:
+∀m_i, m_j ∈ M: i ≠ j ⟹ [α_base(m_i), α_base(m_i) + size(m_i)) ∩ [α_base(m_j), α_base(m_j) + size(m_j)) = ∅
+
+Fields:
+- data ∈ Vector{UInt8}: raw section content
+- base_address ∈ ℕ₆₄: virtual memory address α_base(m)
+- size ∈ ℕ₆₄: memory region size
+- permissions ∈ ℕ₈: read/write/execute flags
 """
 mutable struct MemoryRegion
     data::Vector{UInt8}
@@ -34,60 +54,71 @@ end
 """
     DynamicLinker
 
-Main dynamic linker state.
+Mathematical model: S_Δ = ⟨O, Σ, M, α_base, α_next, T⟩
+Main dynamic linker state representing the complete linking context.
+
+State space components:
+- loaded_objects ∈ Vector{ElfFile}: O = {o_i}_{i=1}^n loaded ELF objects
+- global_symbol_table ∈ Dict{String, Symbol}: Σ: String → Symbol mapping
+- memory_regions ∈ Vector{MemoryRegion}: M = {m_j}_{j=1}^k memory allocations
+- base_address ∈ ℕ₆₄: α_base virtual memory base
+- next_address ∈ ℕ₆₄: α_next next available address
+- temp_files ∈ Vector{String}: T temporary file cleanup set
 """
 mutable struct DynamicLinker
-    loaded_objects::Vector{ElfFile}
-    global_symbol_table::Dict{String, Symbol}
-    memory_regions::Vector{MemoryRegion}
-    base_address::UInt64
-    next_address::UInt64
-    temp_files::Vector{String}  # Track temporary files for cleanup
+    loaded_objects::Vector{ElfFile}           # ↔ O = {o_i}
+    global_symbol_table::Dict{String, Symbol} # ↔ Σ: String → Symbol  
+    memory_regions::Vector{MemoryRegion}      # ↔ M = {m_j}
+    base_address::UInt64                      # ↔ α_base ∈ ℕ₆₄
+    next_address::UInt64                      # ↔ α_next ∈ ℕ₆₄
+    temp_files::Vector{String}                # ↔ T cleanup set
 end
 
 """
-    DynamicLinker() -> DynamicLinker
+    DynamicLinker(base_address::UInt64 = UInt64(0x400000)) -> DynamicLinker
 
-Create a new dynamic linker instance.
+Mathematical model: S_Δ initialization
+Create a new dynamic linker instance with initial state S_Δ = ⟨∅, ∅, ∅, α_base, α_base, ∅⟩
+
+Base address α_base defaults to 0x400000 (standard Linux executable base).
 """
-function DynamicLinker(base_address::UInt64 = UInt64(0x400000))
+function DynamicLinker(alpha_base::UInt64 = UInt64(0x400000))
+    # Initialize linker state: S_Δ = ⟨O, Σ, M, α_base, α_next, T⟩
     return DynamicLinker(
-        ElfFile[],
-        Dict{String, Symbol}(),
-        MemoryRegion[],
-        base_address,
-        base_address,
-        String[]
+        ElfFile[],                    # ↔ O = ∅ (empty object set)
+        Dict{String, Symbol}(),       # ↔ Σ = ∅ (empty symbol table)
+        MemoryRegion[],              # ↔ M = ∅ (empty memory regions)
+        alpha_base,                   # ↔ α_base virtual memory base
+        alpha_base,                   # ↔ α_next = α_base initially
+        String[]                      # ↔ T = ∅ (empty temp files)
     )
 end
 
 """
     load_object(linker::DynamicLinker, filename::String) -> Bool
 
-Load an ELF object file or archive file into the linker.
+Mathematical model: δ_load: ElfFile × S_Δ → S_Δ'
+Load an ELF object file or archive file into the linker state.
 
-Mathematical model:
+File type dispatch function:
 ```math
-load_object: (DynamicLinker, File) \\to Bool
-```
-
-Where:
-```math
-load_object(linker, file) = \\begin{cases}
-load_elf(linker, file) & \\text{if } file \\text{ is ELF} \\\\
-load_archive(linker, file) & \\text{if } file \\text{ is archive} \\\\
-false & \\text{otherwise}
+δ_load(linker, file) = \\begin{cases}
+δ_{load\\_elf}(linker, file) & \\text{if } file \\in ELF\\_FILES \\\\
+δ_{load\\_archive}(linker, file) & \\text{if } file \\in AR\\_FILES \\\\
+⊥ & \\text{otherwise}
 \\end{cases}
 ```
+
+State transformation: S_Δ → S_Δ' where O' = O ∪ {parsed_object}
 """
 function load_object(linker::DynamicLinker, filename::String)
-    # Detect file type by magic bytes
+    # File type detection: classify(file) ∈ {ELF_FILE, AR_FILE, UNKNOWN}
     file_type = detect_file_type_by_magic(filename)
     
     if file_type == ELF_FILE
-        return load_elf_object(linker, filename)
+        return delta_load_elf_object(linker, filename)        # ↔ δ_load_elf
     elseif file_type == AR_FILE
-        return load_archive_objects(linker, filename)
+        return delta_load_archive_objects(linker, filename)   # ↔ δ_load_archive
     else
         println("Failed to load object $filename: Unsupported file type")
         return false
@@ -404,49 +435,97 @@ end
 """
     resolve_symbols(linker::DynamicLinker) -> Vector{String}
 
-Resolve all symbols and return a list of unresolved symbols.
+Mathematical model: δ_resolve: S_Δ → S_Δ' × U
+Resolve all symbols in the global symbol table and return unresolved symbol set.
+
+Symbol resolution function:
+```math
+Σ'(name) = \\begin{cases}
+address(def) & \\text{if } \\exists def \\in \\bigcup_{o \\in O} symbols(o): def.name = name \\land defined(def) \\\\
+⊥ & \\text{if } binding(name) = STB\\_STRONG \\land \\neg\\exists def
+\\end{cases}
+```
+
+Returns: U = {s ∈ Σ : ¬defined(s)} (unresolved symbol set)
 """
 function resolve_symbols(linker::DynamicLinker)
-    unresolved = String[]
+    # Initialize unresolved symbol set: U = ∅
+    unresolved_symbols = String[]                           # ↔ U initialization
     
-    for (name, symbol) in linker.global_symbol_table
-        if !symbol.defined
-            push!(unresolved, name)
+    # Iterate over global symbol table: ∀(name, symbol) ∈ Σ
+    for (symbol_name, symbol) in linker.global_symbol_table
+        if !symbol.defined                                  # ↔ ¬defined(symbol)
+            # Search for definition in loaded objects: ⋃_{o ∈ O} symbols(o)
+            found_definition = nothing
+            for obj in linker.loaded_objects                # ↔ object iteration
+                for obj_symbol in obj.symbols               # ↔ symbol search
+                    obj_symbol_name = get_string_from_table(obj.symbol_string_table, obj_symbol.name)
+                    # Check for matching defined symbol: def.name = name ∧ defined(def)
+                    if obj_symbol_name == symbol_name && obj_symbol.section != 0  # ↔ definition check
+                        found_definition = obj_symbol       # ↔ definition found
+                        break
+                    end
+                end
+                found_definition !== nothing && break
+            end
+            
+            if found_definition !== nothing
+                # Update symbol with definition: Σ'(name) = address(def)
+                updated_symbol = Symbol(
+                    symbol_name, found_definition.value, found_definition.size,
+                    found_definition.binding, found_definition.type, found_definition.section,
+                    true, symbol.source_file                # ↔ defined = true
+                )
+                linker.global_symbol_table[symbol_name] = updated_symbol  # ↔ Σ' update
+            else
+                # Strong unresolved symbol: symbol ∈ U
+                push!(unresolved_symbols, symbol_name)     # ↔ add to unresolved set
+            end
         end
     end
     
-    return unresolved
+    return unresolved_symbols                               # ↔ U result
 end
 
 """
     allocate_memory_regions!(linker::DynamicLinker)
 
-Allocate memory regions for all loaded sections.
+Mathematical model: δ_allocate: S_Δ → S_Δ'
+Allocate memory regions for all loaded sections with non-overlap constraint.
+
+Memory allocation constraint:
+```math
+\\forall m_i, m_j \\in M': i ≠ j \\implies [α_{base}(m_i), α_{base}(m_i) + size(m_i)) \\cap [α_{base}(m_j), α_{base}(m_j) + size(m_j)) = ∅
+```
+
+Address computation: α_next' = max_{m ∈ M'} (α_base(m) + size(m))
 """
 function allocate_memory_regions!(linker::DynamicLinker)
-    current_address = linker.next_address
-    section_address_map = Dict{Tuple{String, UInt16}, UInt64}()  # Map (filename, section_index) to address
+    # Current address tracking: α_current = α_next
+    alpha_current = linker.next_address                     # ↔ α_current initialization
+    section_address_map = Dict{Tuple{String, UInt16}, UInt64}()  # Section → address mapping
     
+    # Iterate over all loaded objects: ∀o ∈ O
     for elf_file in linker.loaded_objects
         for (section_idx, section) in enumerate(elf_file.sections)
-            # Only allocate memory for sections that need it
+            # Allocatable section filter: section.flags ∧ SHF_ALLOC ≠ 0
             if section.flags & SHF_ALLOC != 0 && section.size > 0
-                # Align address
-                aligned_addr = align_address(current_address, section.addralign)
+                # Address alignment: align_to_boundary(α_current, section.addralign)
+                alpha_aligned = align_address(alpha_current, section.addralign)  # ↔ alignment constraint
                 
-                # Store section address mapping (ELF sections are 0-indexed, but Julia enumerate is 1-indexed)
-                elf_section_index = UInt16(section_idx - 1)
-                section_address_map[(elf_file.filename, elf_section_index)] = aligned_addr
+                # Section address mapping: (filename, index) ↦ α_aligned
+                elf_section_index = UInt16(section_idx - 1)  # ↔ 0-based indexing correction
+                section_address_map[(elf_file.filename, elf_section_index)] = alpha_aligned
                 
-                # Create memory region
+                # Create memory region: m = ⟨data, α_base, size, permissions⟩
                 region = MemoryRegion(
-                    zeros(UInt8, section.size),
-                    aligned_addr,
-                    section.size,
-                    get_section_permissions(section.flags)
+                    zeros(UInt8, section.size),            # ↔ data allocation
+                    alpha_aligned,                         # ↔ α_base(m) = α_aligned
+                    section.size,                          # ↔ size(m)
+                    get_section_permissions(section.flags) # ↔ permissions mapping
                 )
                 
-                # Load section data if it exists in file
+                # Load section data if available: data copying from file
                 if section.type == SHT_PROGBITS && section.offset > 0
                     open(elf_file.filename, "r") do io
                         seek(io, section.offset)
