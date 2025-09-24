@@ -2,52 +2,27 @@
 
 ## Overview
 
-The MiniElfLinker provides a command-line interface compatible with common Unix linkers like `ld`. This specification defines the supported options, argument parsing, and program behavior.
+The CLI interface handles command-line argument parsing and program execution coordination. As a non-algorithmic component focused on configuration and user interaction, this specification uses direct Julia documentation following the Mathematical-Driven AI Development methodology.
 
-## Basic Usage
+## Interface Design (Julia Direct Documentation)
 
-```bash
-# Link object files into executable
-mini-elf-linker file1.o file2.o -o program
-
-# Link with libraries
-mini-elf-linker main.o -lc -o program
-
-# Specify library search paths
-mini-elf-linker main.o -L/usr/local/lib -lmylib -o program
-
-# Set base address
-mini-elf-linker main.o --Ttext=0x400000 -o program
-```
-
-## Supported Options
-
-### Output Control
-- `-o <file>`, `--output <file>`: Specify output filename
-- `-o<file>`: Alternative compact form
-
-### Library Handling
-- `-l<name>`: Link with library `lib<name>.a` or `lib<name>.so`
-- `-L<path>`: Add directory to library search path
-- `--library-path=<path>`: Alternative form for `-L`
-
-### Memory Layout
-- `--Ttext=<address>`: Set text segment base address
-- `--Ttext-segment=<address>`: Alternative form
-- `-e <symbol>`, `--entry=<symbol>`: Set entry point symbol
-
-### Linking Mode
-- `-static`: Create statically linked executable
-- `-shared`: Create shared library (planned)
-
-### Information Options
-- `-h`, `--help`: Show help message
-- `--version`: Show version information
-
-## Argument Processing
-
-### LinkerOptions Structure
+### LinkerOptions Configuration Structure
 ```julia
+"""
+LinkerOptions contains all configuration parameters extracted from command-line arguments.
+This is a non-algorithmic data structure for storing user preferences and program settings.
+
+Fields:
+- input_files: Object files to link together
+- output_file: Target executable name (default: "a.out")
+- library_names: Libraries to link against (from -l flags)
+- library_search_paths: Additional library search directories (from -L flags)  
+- base_address: Memory base address for text segment
+- entry_symbol: Symbol name for program entry point
+- help: Show help message flag
+- version: Show version information flag
+- static_link: Create statically linked executable
+"""
 mutable struct LinkerOptions
     input_files::Vector{String}
     output_file::String
@@ -58,88 +33,108 @@ mutable struct LinkerOptions
     help::Bool
     version::Bool
     static_link::Bool
+    
+    function LinkerOptions()
+        new(
+            String[],           # input_files
+            "a.out",            # output_file (default)
+            String[],           # library_names
+            String[],           # library_search_paths
+            0x400000,           # base_address (standard x86-64 default)
+            "main",             # entry_symbol (C convention)
+            false,              # help
+            false,              # version
+            false               # static_link
+        )
+    end
 end
 ```
 
-### Default Values
+### Argument Processing Implementation
 ```julia
-function LinkerOptions()
-    return LinkerOptions(
-        String[],           # input_files
-        "a.out",            # output_file
-        String[],           # library_names
-        String[],           # library_search_paths
-        0x400000,           # base_address
-        "main",             # entry_symbol
-        false,              # help
-        false,              # version
-        false               # static_link
-    )
-end
-```
+"""
+parse_arguments processes command-line arguments into LinkerOptions.
+Non-algorithmic: straightforward option parsing without complex algorithms.
 
-### Argument Parser
-```julia
+This implementation follows Unix linker conventions for compatibility with ld and lld.
+"""
 function parse_arguments(args::Vector{String})::LinkerOptions
     options = LinkerOptions()
     i = 1
     
-    while i <= length(args)
+    while i ≤ length(args)
         arg = args[i]
         
-        if arg in ["--help", "-h"]
+        # Help and version flags
+        if arg ∈ ["--help", "-h"]
             options.help = true
             
         elseif arg == "--version"
             options.version = true
             
-        elseif arg in ["-o", "--output"]
+        # Output file specification
+        elseif arg ∈ ["-o", "--output"]
             if i + 1 > length(args)
-                error("Option $arg requires an argument")
+                throw(ArgumentError("Option $arg requires an argument"))
             end
             options.output_file = args[i + 1]
             i += 1
             
         elseif startswith(arg, "-o")
+            # Compact form: -ofilename
             options.output_file = arg[3:end]
             
+        # Library search paths
         elseif arg == "-L"
             if i + 1 > length(args)
-                error("Option -L requires an argument")
+                throw(ArgumentError("Option -L requires a directory path"))
             end
             push!(options.library_search_paths, args[i + 1])
             i += 1
             
         elseif startswith(arg, "-L")
+            # Compact form: -L/path/to/libs
             push!(options.library_search_paths, arg[3:end])
             
+        # Library names
         elseif startswith(arg, "-l")
-            push!(options.library_names, arg[3:end])
+            if length(arg) ≤ 2
+                throw(ArgumentError("Option -l requires a library name"))
+            end
+            # Extract library name: -lmath → "math"
+            library_name = arg[3:end]
+            push!(options.library_names, library_name)
             
-        elseif arg in ["-e", "--entry"]
+        # Entry point specification
+        elseif arg ∈ ["-e", "--entry"]
             if i + 1 > length(args)
-                error("Option $arg requires an argument")
+                throw(ArgumentError("Option $arg requires a symbol name"))
             end
             options.entry_symbol = args[i + 1]
             i += 1
             
+        # Base address specification
         elseif startswith(arg, "--Ttext=")
             addr_str = arg[9:end]
-            options.base_address = parse_address(addr_str)
+            options.base_address = parse_address_string(addr_str)
             
         elseif startswith(arg, "--Ttext-segment=")
             addr_str = arg[17:end]
-            options.base_address = parse_address(addr_str)
+            options.base_address = parse_address_string(addr_str)
             
+        # Linking mode
         elseif arg == "-static"
             options.static_link = true
             
+        elseif arg == "-shared"
+            @warn "Shared library creation not yet implemented"
+            
+        # Input files (non-option arguments)
         elseif !startswith(arg, "-")
-            # Input file
             push!(options.input_files, arg)
             
         else
-            println("Warning: Unknown option '$arg' ignored")
+            @warn "Unknown option '$arg' ignored"
         end
         
         i += 1
@@ -149,192 +144,289 @@ function parse_arguments(args::Vector{String})::LinkerOptions
 end
 ```
 
-## Address Parsing
-
-Supports multiple address formats:
-- Hexadecimal: `0x400000`, `0X400000`
-- Decimal: `4194304`
-- Octal: `0o17777777` (Julia format)
-
+### Address Parsing Utilities
 ```julia
-function parse_address(addr_str::String)::UInt64
-    if startswith(addr_str, "0x") || startswith(addr_str, "0X")
-        return parse(UInt64, addr_str[3:end], base=16)
-    elseif startswith(addr_str, "0o")
-        return parse(UInt64, addr_str[3:end], base=8)
-    else
-        return parse(UInt64, addr_str)
+"""
+parse_address_string converts various address formats to UInt64.
+Non-algorithmic utility function for handling different numeric formats.
+
+Supported formats:
+- Hexadecimal: 0x400000, 0X400000
+- Decimal: 4194304
+- Octal: 0o17777777 (Julia syntax)
+"""
+function parse_address_string(addr_str::String)::UInt64
+    try
+        if startswith(addr_str, "0x") || startswith(addr_str, "0X")
+            return parse(UInt64, addr_str[3:end], base=16)
+        elseif startswith(addr_str, "0o")
+            return parse(UInt64, addr_str[3:end], base=8)
+        else
+            return parse(UInt64, addr_str, base=10)
+        end
+    catch e
+        throw(ArgumentError("Invalid address format: '$addr_str'"))
     end
 end
 ```
 
-## Help System
+## Program Flow Control (Julia Direct Documentation)
 
-### Help Message
-```
-Usage: mini-elf-linker [OPTIONS] file1.o file2.o ...
-
-Options:
-  -o <file>              Write output to <file> (default: a.out)
-  -l<name>               Link with library lib<name>.a
-  -L<path>               Add <path> to library search paths
-  --Ttext=<address>      Set base address for text segment
-  -e <symbol>            Set entry point symbol (default: main)
-  -static                Create statically linked executable
-  -h, --help             Show this help message
-  --version              Show version information
-
-Examples:
-  mini-elf-linker main.o utils.o -o myprogram
-  mini-elf-linker main.o -lc -L/usr/local/lib -o myprogram
-  mini-elf-linker main.o --Ttext=0x10000000 -o myprogram
-```
-
-### Version Information
-```
-MiniElfLinker v0.1.0
-Educational ELF linker implementation in Julia
-Target: x86_64-linux-gnu
-```
-
-## Error Messages
-
-### Missing Arguments
-```
-Error: Option '-o' requires an argument
-Error: Option '-L' requires an argument  
-Error: Option '-e' requires an argument
-```
-
-### Invalid Input
-```
-Error: Invalid address format: '0xGGG'
-Error: File not found: 'nonexistent.o'
-Error: Cannot write to output file: '/root/output'
-```
-
-### Parsing Errors
-```
-Error: Failed to parse 'corrupted.o': Invalid ELF magic number
-Error: Unsupported ELF architecture in 'arm_file.o'
-```
-
-## Program Flow
-
-### Main Function
+### Main Entry Point
 ```julia
-function main(args=ARGS)
+"""
+main function coordinates the complete program execution flow.
+Non-algorithmic: program structure and control flow management.
+"""
+function main(args::Vector{String} = ARGS)::Int
     try
+        # Parse command-line arguments
         options = parse_arguments(args)
         
+        # Handle information requests
         if options.help
-            show_help()
+            show_help_message()
             return 0
         end
         
         if options.version
-            show_version()
+            show_version_information()
             return 0
         end
         
+        # Validate input
         if isempty(options.input_files)
-            println("Error: No input files specified")
+            println(stderr, "Error: No input files specified")
+            println(stderr, "Use --help for usage information")
             return 1
         end
         
-        return execute_linker(options)
+        # Execute linking process
+        return execute_linker_with_options(options)
         
     catch e
-        println("Error: $e")
+        println(stderr, "Error: $e")
         return 1
     end
 end
 ```
 
-### Linker Execution
+### Linker Execution Coordinator
 ```julia
-function execute_linker(options::LinkerOptions)::Int
+"""
+execute_linker_with_options coordinates the linking process using parsed options.
+Non-algorithmic: orchestrates the mathematical linking algorithms with user configuration.
+"""
+function execute_linker_with_options(options::LinkerOptions)::Int
     try
-        # Create linker with specified base address
-        linker = DynamicLinker(base_address=options.base_address)
+        println("MiniElfLinker: Linking $(length(options.input_files)) object file(s)")
         
-        # Load input objects
-        for filename in options.input_files
-            load_object(linker, filename)
-        end
-        
-        # Link objects with libraries
-        link_objects(linker, 
-            library_search_paths=options.library_search_paths,
-            library_names=options.library_names)
-        
-        # Generate executable
-        link_to_executable(
-            options.input_files, 
-            options.output_file,
-            base_address=options.base_address,
-            entry_symbol=options.entry_symbol,
-            library_search_paths=options.library_search_paths,
-            library_names=options.library_names
+        # Execute the mathematical linking pipeline
+        linker = execute_linking_pipeline(
+            options.input_files,
+            options.output_file;
+            base_address = options.base_address,
+            entry_symbol = options.entry_symbol,
+            library_search_paths = options.library_search_paths,
+            library_names = options.library_names,
+            static_link = options.static_link
         )
         
+        println("Successfully created executable: $(options.output_file)")
         return 0
         
     catch e
-        println("Linking failed: $e")
+        println(stderr, "Linking failed: $e")
         return 1
     end
 end
 ```
 
-## Environment Variables
+## Help and Information Display (Julia Direct Documentation)
 
-### Library Search
-- `LD_LIBRARY_PATH`: Additional library search directories
-- `LIBRARY_PATH`: Compile-time library search paths
+### Help System
+```julia
+"""
+show_help_message displays comprehensive usage information.
+Non-algorithmic: user interface and documentation display.
+"""
+function show_help_message()
+    println("""
+MiniElfLinker - Educational ELF Linker Implementation
 
-### Configuration
-- `MINI_ELF_DEBUG`: Enable debug output (values: 0, 1)
-- `MINI_ELF_TEMP_DIR`: Temporary directory for extracted archives
+USAGE:
+    mini-elf-linker [OPTIONS] file1.o file2.o ...
 
-## Exit Codes
+OPTIONS:
+    -o <file>, --output <file>    Write output to <file> (default: a.out)
+    -l<name>                      Link with library lib<name>.a or lib<name>.so
+    -L<path>                      Add <path> to library search paths
+    --Ttext=<address>             Set base address for text segment
+    --Ttext-segment=<address>     Alternative form of --Ttext
+    -e <symbol>, --entry <symbol> Set entry point symbol (default: main)
+    -static                       Create statically linked executable
+    -h, --help                    Show this help message
+    --version                     Show version information
 
-- `0`: Success
-- `1`: General error (parsing, linking, file I/O)
-- `2`: Invalid command line arguments
-- `3`: File not found or permission denied
+ADDRESS FORMATS:
+    Hexadecimal: 0x400000, 0X400000
+    Decimal:     4194304
+    Octal:       0o17777777
 
-## Compatibility Notes
+EXAMPLES:
+    # Basic linking
+    mini-elf-linker main.o utils.o -o myprogram
+    
+    # Link with system libraries
+    mini-elf-linker main.o -lc -lm -o myprogram
+    
+    # Custom library paths and base address
+    mini-elf-linker main.o -L/usr/local/lib -lmylib --Ttext=0x10000000 -o myprogram
+    
+    # Static linking with custom entry point
+    mini-elf-linker start.o main.o -static -e _start -o myprogram
 
-### GNU ld Compatibility
-- Basic option syntax matches `ld`
-- Subset of most common options
-- Different error message format
+LIBRARY SEARCH ORDER:
+    1. Paths specified with -L options (in order)
+    2. Standard system library directories:
+       /lib, /lib64, /usr/lib, /usr/lib64, /usr/local/lib
+    3. Architecture-specific directories (e.g., /usr/lib/x86_64-linux-gnu)
 
-### LLD Compatibility
-- Similar modern option handling
-- Compatible address format parsing
-- Shared basic workflow
+EXIT CODES:
+    0 - Success
+    1 - General error (parsing, linking, file I/O)
+    2 - Invalid command line arguments  
+    3 - File not found or permission denied
+""")
+end
+```
 
-### Limitations
-- No linker script support
-- Limited relocation types
-- No plugin system
-- No LTO (Link Time Optimization)
+### Version Information
+```julia
+"""
+show_version_information displays program version and build details.
+Non-algorithmic: static information display.
+"""
+function show_version_information()
+    println("""
+MiniElfLinker v0.1.0
+Educational ELF linker implementation in Julia
 
-## Future Extensions
+Build Information:
+  Target:       x86_64-linux-gnu
+  Julia:        $(VERSION)
+  Architecture: $(Sys.ARCH)
+  Platform:     $(Sys.KERNEL)
 
-### Planned Options
-- `--dynamic-linker=<path>`: Set dynamic linker path
-- `--rpath=<path>`: Set runtime library search path
-- `--soname=<name>`: Set shared library name
-- `-pie`: Create position-independent executable
+Features:
+  ✅ ELF object file linking
+  ✅ Symbol resolution
+  ✅ Basic relocations (R_X86_64_64, R_X86_64_PC32)
+  ✅ System library integration
+  ✅ Static executable generation
+  ⚠️  Dynamic linking (partial)
+  ❌ Shared library creation
+  ❌ LTO support
 
-### Advanced Features
-- Linker script parsing
-- Section manipulation options
-- Symbol versioning support
-- Garbage collection of unused sections
+For more information: https://github.com/nyanrus/mini-elf-linker-jl
+""")
+end
+```
+
+## Error Handling and Validation (Julia Direct Documentation)
+
+### Input Validation
+```julia
+"""
+validate_input_files checks that all specified input files exist and are readable.
+Non-algorithmic: file system interaction and validation.
+"""
+function validate_input_files(input_files::Vector{String})
+    for filename ∈ input_files
+        if !isfile(filename)
+            throw(ArgumentError("Input file not found: $filename"))
+        end
+        
+        if !isreadable(filename)
+            throw(ArgumentError("Input file not readable: $filename"))
+        end
+        
+        # Basic file type validation
+        file_type = detect_file_type_by_magic(filename)
+        if file_type == "unknown"
+            @warn "Unknown file type for $filename, will attempt to process"
+        end
+    end
+end
+```
+
+### Option Validation
+```julia
+"""
+validate_linker_options performs semantic validation on parsed options.
+Non-algorithmic: configuration validation and consistency checking.
+"""
+function validate_linker_options(options::LinkerOptions)
+    # Validate output file can be created
+    output_dir = dirname(options.output_file)
+    if !isempty(output_dir) && !isdir(output_dir)
+        throw(ArgumentError("Output directory does not exist: $output_dir"))
+    end
+    
+    # Validate base address alignment
+    if options.base_address % 0x1000 != 0
+        @warn "Base address $(options.base_address) is not page-aligned"
+    end
+    
+    # Validate library search paths
+    for path ∈ options.library_search_paths
+        if !isdir(path)
+            @warn "Library search path does not exist: $path"
+        end
+    end
+    
+    # Validate input files exist
+    validate_input_files(options.input_files)
+end
+```
+
+## Integration with Mathematical Components
+
+### Interface to Algorithmic Linker
+```julia
+"""
+execute_linking_pipeline bridges CLI configuration to mathematical linking algorithms.
+This function adapts non-algorithmic CLI parameters to the algorithmic core processes.
+"""
+function execute_linking_pipeline(input_files::Vector{String}, 
+                                 output_file::String;
+                                 base_address::UInt64 = 0x400000,
+                                 entry_symbol::String = "main",
+                                 library_search_paths::Vector{String} = String[],
+                                 library_names::Vector{String} = String[],
+                                 static_link::Bool = false)
+    
+    # Create linker with mathematical algorithms
+    linker = DynamicLinker(base_address=base_address)
+    
+    # Configure library paths (non-algorithmic configuration)
+    linker.library_search_paths = vcat(library_search_paths, get_default_library_search_paths())
+    linker.library_names = library_names
+    
+    # Execute mathematical linking pipeline: ℒ = ω ∘ ρ ∘ φ ∘ δ ∘ π
+    for filename ∈ input_files
+        load_object(linker, filename)  # π_parse component
+    end
+    
+    # Apply mathematical algorithms (see core_processes.md)
+    δ_resolve_symbols(linker)          # Symbol resolution algorithm
+    φ_allocate_memory_regions!(linker) # Memory allocation algorithm  
+    ρ_perform_relocations!(linker)     # Relocation algorithm
+    ω_serialize_executable(linker, output_file) # Serialization
+    
+    return linker
+end
+```
 
 ### Library Path Processing → Library search path handling
 
