@@ -14,5 +14,6 @@ include("dynamic_linker.jl")
 include("elf_writer.jl")
 include("library_support.jl")
 include("cli.jl")
+include("Documentation.jl")
 
 end # module MiniElfLinker
