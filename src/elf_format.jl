@@ -126,6 +126,7 @@ const PT_NOTE = 4           # Note information
 const PT_SHLIB = 5          # Reserved
 const PT_PHDR = 6           # Program header table
 const PT_TLS = 7            # Thread-local storage
+const PT_GNU_STACK = 0x6474e551  # GNU stack permissions
 
 # Program header flags
 const PF_X = 0x1            # Execute

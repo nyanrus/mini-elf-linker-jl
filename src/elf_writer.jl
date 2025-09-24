@@ -57,30 +57,25 @@ function write_program_header(io::IO, ph::ProgramHeader)
 end
 
 """
-    create_program_headers(linker::DynamicLinker) -> Vector{ProgramHeader}
+    create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, ph_table_size::UInt64) -> Vector{ProgramHeader}
 
-Create proper program headers that group memory regions into segments like LLD.
+Create proper program headers that include ELF headers in the first LOAD segment.
 
-Mathematical model for segment grouping:
-```math
-segments = \\{text\\_segment, rodata\\_segment, data\\_segment\\}
-```
-
-Where:
+Mathematical model for proper ELF segment layout:
 ```math
 \\begin{align}
-text\\_segment &= \\{region : region.permissions = R+X\\} \\\\
-rodata\\_segment &= \\{region : region.permissions = R\\} \\\\
-data\\_segment &= \\{region : region.permissions = R+W\\}
+header\\_segment &= \\{ELF\\_header, program\\_headers, text\\_sections\\} \\\\
+rodata\\_segment &= \\{read\\_only\\_sections\\} \\\\
+data\\_segment &= \\{writable\\_sections\\}
 \\end{align}
 ```
 """
-function create_program_headers(linker::DynamicLinker)
+function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, ph_table_size::UInt64)
     if isempty(linker.memory_regions)
         return ProgramHeader[]
     end
     
-    # Group memory regions by permissions to create proper segments
+    # Group memory regions by permissions
     text_regions = MemoryRegion[]      # R+X (executable)
     rodata_regions = MemoryRegion[]    # R (read-only data)
     data_regions = MemoryRegion[]      # R+W (writable data)
@@ -98,18 +93,31 @@ function create_program_headers(linker::DynamicLinker)
     
     program_headers = ProgramHeader[]
     
-    # Create text segment (R+X) if we have executable regions
+    # Calculate base address - should be page-aligned
+    base_addr = 0x400000  # Standard base address
+    headers_size = elf_header_size + ph_table_size + 0x1000  # Add padding
+    
+    # Create first LOAD segment: ELF headers + text regions
     if !isempty(text_regions)
-        min_addr = minimum(r.base_address for r in text_regions)
-        max_addr = maximum(r.base_address + r.size for r in text_regions)
-        total_size = max_addr - min_addr
+        min_text_addr = minimum(r.base_address for r in text_regions)
+        max_text_addr = maximum(r.base_address + r.size for r in text_regions)
+        
+        # First segment includes ELF header and extends to cover text regions
+        # Virtual address should be page-aligned and include headers
+        first_vaddr = min_text_addr & ~0xfff  # Round down to page boundary
+        if first_vaddr > base_addr
+            first_vaddr = base_addr
+        end
+        
+        # Calculate total size from headers through text regions
+        total_size = max_text_addr - first_vaddr
         
         push!(program_headers, ProgramHeader(
             PT_LOAD,                    # type
-            PF_R | PF_X,               # flags (Read + Execute)
-            0,                         # offset (to be filled)
-            min_addr,                  # vaddr
-            min_addr,                  # paddr
+            PF_R | PF_X,               # flags (Read + Execute) 
+            0,                         # offset (starts at file beginning)
+            first_vaddr,               # vaddr
+            first_vaddr,               # paddr
             total_size,                # filesz
             total_size,                # memsz
             0x1000                     # align (4KB)
@@ -134,7 +142,7 @@ function create_program_headers(linker::DynamicLinker)
         ))
     end
     
-    # Create data segment (R+W) if we have writable regions
+    # Create data segment (R+W) if we have writable regions  
     if !isempty(data_regions)
         min_addr = minimum(r.base_address for r in data_regions)
         max_addr = maximum(r.base_address + r.size for r in data_regions)
@@ -152,6 +160,18 @@ function create_program_headers(linker::DynamicLinker)
         ))
     end
     
+    # Add GNU_STACK program header (required for modern Linux executables)
+    push!(program_headers, ProgramHeader(
+        PT_GNU_STACK,               # type
+        PF_R | PF_W,               # flags (Read + Write, no Execute)
+        0,                         # offset (not applicable for GNU_STACK)
+        0,                         # vaddr (not applicable for GNU_STACK)
+        0,                         # paddr (not applicable for GNU_STACK)  
+        0,                         # filesz (not applicable for GNU_STACK)
+        0,                         # memsz (not applicable for GNU_STACK)
+        0x10                       # align (16-byte alignment)
+    ))
+    
     return program_headers
 end
 
@@ -162,12 +182,14 @@ Write an executable ELF file from the linker state.
 """
 function write_elf_executable(linker::DynamicLinker, output_filename::String; entry_point::UInt64 = UInt64(0x401000))
     open(output_filename, "w") do io
-        # Create program headers
-        program_headers = create_program_headers(linker)
-        
         # Calculate layout
         elf_header_size = 64  # ELF64 header size
-        ph_table_size = length(program_headers) * 56  # Program header size is 56 bytes for ELF64
+        # We need to calculate program headers in two passes since we need the count
+        temp_headers = create_program_headers(linker, UInt64(elf_header_size), UInt64(0))
+        ph_table_size = length(temp_headers) * 56  # Program header size is 56 bytes for ELF64
+        
+        # Create program headers with correct sizes
+        program_headers = create_program_headers(linker, UInt64(elf_header_size), UInt64(ph_table_size))
         
         # Calculate data offset (after headers)
         data_offset = elf_header_size + ph_table_size
@@ -179,11 +201,21 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
         # Update program header file offsets
         current_offset = data_offset
         for (i, ph) in enumerate(program_headers)
-            program_headers[i] = ProgramHeader(
-                ph.type, ph.flags, current_offset, ph.vaddr, ph.paddr,
-                ph.filesz, ph.memsz, ph.align
-            )
-            current_offset += ph.filesz
+            if ph.type == PT_LOAD
+                if i == 1  # First LOAD segment starts at offset 0 (includes ELF headers)
+                    program_headers[i] = ProgramHeader(
+                        ph.type, ph.flags, 0, ph.vaddr, ph.paddr,
+                        ph.filesz, ph.memsz, ph.align
+                    )
+                else  # Subsequent LOAD segments start after data
+                    program_headers[i] = ProgramHeader(
+                        ph.type, ph.flags, current_offset, ph.vaddr, ph.paddr,
+                        ph.filesz, ph.memsz, ph.align
+                    )
+                    current_offset += ph.filesz
+                end
+            end
+            # Non-LOAD segments (like GNU_STACK) keep their original offsets
         end
         
         # Create ELF header for executable
@@ -226,7 +258,14 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
         end
         
         # Write segment data by grouping memory regions
-        for ph in program_headers
+        # The first LOAD segment contains ELF headers + text regions
+        # We already wrote the headers, so now write the text regions at data_offset
+        for (segment_idx, ph) in enumerate(program_headers)
+            # Skip non-LOAD segments
+            if ph.type != PT_LOAD
+                continue
+            end
+            
             # Find all memory regions that belong to this segment
             segment_regions = filter(linker.memory_regions) do region
                 region.base_address >= ph.vaddr && 
@@ -236,8 +275,13 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
             # Sort regions by address
             sort!(segment_regions, by=r -> r.base_address)
             
-            # Ensure we're at the correct file offset for this segment
-            seek(io, ph.offset)
+            # For the first LOAD segment, write data starting at data_offset
+            # For other segments, write at their specified offset
+            if segment_idx == 1  # First LOAD segment
+                seek(io, data_offset)
+            else
+                seek(io, ph.offset)
+            end
             
             # Write all regions in this segment, padding gaps if needed
             current_addr = ph.vaddr
