@@ -1,52 +1,432 @@
-# Library Support Mathematical Specification
+# Library Support Specification
 
-## Mathematical Model
+## Overview
 
-```math
-\text{Domain: } \mathcal{D} = \{\text{Search paths}, \text{Library names}, \text{Symbol names}, \text{Library types}\}
-\text{Range: } \mathcal{R} = \{\text{Library info}, \text{Symbol mappings}, \text{Resolution results}\}
-\text{Mapping: } find\_and\_resolve: \mathcal{D} \to \mathcal{R}
+The MiniElfLinker supports linking with system libraries to resolve external symbols. This includes automatic detection of system C libraries, library search path management, and symbol resolution from static archives and shared libraries.
+
+## Library Types
+
+### Supported Library Types
+```julia
+@enum LibraryType begin
+    GLIBC      # GNU C Library (most common)
+    MUSL       # musl C Library (Alpine Linux, embedded)
+    STATIC     # Static archive (.a files)
+    SHARED     # Shared object (.so files)  
+    UNKNOWN    # Unrecognized library type
+end
 ```
 
-## Operations
-
-```math
-\text{Primary operations: } \{detect\_library\_type, find\_libraries, resolve\_symbols, extract\_symbols\}
-\text{Library types: } \{GLIBC, MUSL, STATIC, SHARED, UNKNOWN\}
-\text{Invariants: } \{library\_valid, symbol\_available, path\_accessible, search\_order\_preserved\}
-\text{Complexity bounds: } O(p \cdot f + s \cdot l) \text{ where } p,f,s,l = \text{paths, files, symbols, libraries}
+### Library Information Structure
+```julia
+struct LibraryInfo
+    name::String              # Library name (e.g., "libc")
+    path::String              # Full file path
+    type::LibraryType         # Library classification
+    symbols::Vector{String}   # Available symbols (if extracted)
+    arch::String              # Target architecture
+end
 ```
 
-## Library Search Mathematical Model
+## Library Discovery
 
-```math
-find\_libraries: \mathcal{P} \times \mathcal{N} \to \mathcal{L}
+### Default Search Paths
+Standard locations where libraries are typically found:
+
+```julia
+function get_default_library_search_paths()::Vector{String}
+    return [
+        "/lib",
+        "/lib64", 
+        "/usr/lib",
+        "/usr/lib64",
+        "/usr/local/lib",
+        "/usr/lib/x86_64-linux-gnu",  # Debian/Ubuntu multiarch
+        "/lib/x86_64-linux-gnu"
+    ]
+end
 ```
 
-where:
-- $\mathcal{P} = \{search\_paths\}$ is the set of library search paths
-- $\mathcal{N} = \{library\_names\}$ is the set of requested library names  
-- $\mathcal{L} = \{LibraryInfo\}$ is the set of discovered libraries
-
-**Search path union with precedence**:
-```math
-search\_paths = custom\_paths \cup default\_paths
+### Library Search Algorithm
+```julia
+function find_libraries(search_paths::Vector{String}, 
+                       library_names::Vector{String} = String[])::Vector{LibraryInfo}
+    libraries = LibraryInfo[]
+    
+    # Combine custom and default search paths
+    all_paths = vcat(search_paths, get_default_library_search_paths())
+    
+    for path in all_paths
+        if !isdir(path)
+            continue
+        end
+        
+        # Scan directory for library files
+        for filename in readdir(path)
+            full_path = joinpath(path, filename)
+            
+            # Check if it's a library file
+            if is_library_file(filename)
+                lib_info = analyze_library_file(full_path)
+                
+                # Filter by requested names if specified
+                if isempty(library_names) || lib_info.name in library_names
+                    push!(libraries, lib_info)
+                end
+            end
+        end
+    end
+    
+    return unique_libraries(libraries)
+end
 ```
 
-**Library discovery operation**:
-```math
-discovered\_libraries = \bigcup_{path \in search\_paths} \{lib \in scan(path) : matches\_pattern(lib) \land satisfies\_filter(lib)\}
+### Library File Recognition
+```julia
+function is_library_file(filename::String)::Bool
+    # Static libraries (.a files)
+    if endswith(filename, ".a") && startswith(filename, "lib")
+        return true
+    end
+    
+    # Shared libraries (.so files)
+    if contains(filename, ".so") && startswith(filename, "lib")
+        return true
+    end
+    
+    return false
+end
 ```
 
-**Filter predicate**:
-```math
-satisfies\_filter(lib) = \begin{cases}
-true & \text{if } library\_names = \emptyset \\
-lib.name \in library\_names & \text{otherwise}
-\end{cases}
+## Library Analysis
+
+### File Type Detection
+```julia
+function detect_library_type(filepath::String)::LibraryType
+    try
+        # Try to detect by file magic
+        file_type = detect_file_type_by_magic(filepath)
+        
+        if file_type == "ELF shared library"
+            return detect_libc_type(filepath)
+        elseif file_type == "AR archive"
+            return STATIC
+        else
+            return UNKNOWN
+        end
+    catch
+        return UNKNOWN
+    end
+end
 ```
 
-## Implementation Correspondence
+### C Library Detection
+```julia
+function detect_libc_type(library_path::String)::LibraryType
+    try
+        # Extract symbols to check for library-specific functions
+        symbols = extract_elf_symbols_native(library_path)
+        symbol_names = [sym.name for sym in symbols]
+        
+        # Check for glibc-specific symbols
+        glibc_markers = ["__glibc_version", "__libc_start_main", "gnu_get_libc_version"]
+        if any(marker -> marker in symbol_names, glibc_markers)
+            return GLIBC
+        end
+        
+        # Check for musl-specific symbols  
+        musl_markers = ["__dls3", "__init_tp", "__libc"]
+        if any(marker -> marker in symbol_names, musl_markers)
+            return MUSL
+        end
+        
+        # Generic shared library
+        return SHARED
+        
+    catch e
+        @debug "Failed to detect libc type: $e"
+        return UNKNOWN
+    end
+end
+```
+
+## Symbol Resolution
+
+### System Library Integration
+```julia
+function resolve_unresolved_symbols!(linker::DynamicLinker)::Vector{String}
+    unresolved = String[]
+    
+    # Find system libraries
+    system_libs = find_system_libraries()
+    
+    for (symbol_name, symbol_info) in linker.global_symbol_table
+        if !symbol_info.defined
+            # Try to find symbol in system libraries
+            found = false
+            
+            for lib in system_libs
+                if has_symbol(lib, symbol_name)
+                    # Mark symbol as resolved
+                    symbol_info.defined = true
+                    symbol_info.value = 0  # Will be resolved at runtime
+                    symbol_info.source = lib.path
+                    found = true
+                    break
+                end
+            end
+            
+            if !found
+                push!(unresolved, symbol_name)
+            end
+        end
+    end
+    
+    return unresolved
+end
+```
+
+### Symbol Extraction from Libraries
+```julia
+function extract_library_symbols(library_path::String)::Vector{String}
+    if endswith(library_path, ".a")
+        # Static archive
+        return extract_archive_symbols_native(library_path)
+    else
+        # ELF shared library
+        symbols = extract_elf_symbols_native(library_path) 
+        return [sym.name for sym in symbols if sym.binding == STB_GLOBAL]
+    end
+end
+```
+
+## Standard C Library Support
+
+### Finding Default C Library
+```julia
+function find_default_libc()::Union{LibraryInfo, Nothing}
+    search_paths = get_default_library_search_paths()
+    
+    # Common libc names
+    libc_names = ["libc.so.6", "libc.so", "libc.a"]
+    
+    for path in search_paths
+        for name in libc_names
+            full_path = joinpath(path, name)
+            if isfile(full_path)
+                return LibraryInfo(
+                    name="libc",
+                    path=full_path,
+                    type=detect_library_type(full_path),
+                    symbols=String[],  # Lazy loading
+                    arch="x86_64"
+                )
+            end
+        end
+    end
+    
+    return nothing
+end
+```
+
+### C Runtime Objects
+```julia
+function find_crt_objects()::Dict{String, String}
+    crt_objects = Dict{String, String}()
+    search_paths = [
+        "/usr/lib/x86_64-linux-gnu",
+        "/usr/lib64",  
+        "/lib64"
+    ]
+    
+    crt_files = ["crt1.o", "crti.o", "crtn.o"]
+    
+    for path in search_paths
+        for crt_file in crt_files
+            full_path = joinpath(path, crt_file)
+            if isfile(full_path)
+                crt_objects[crt_file] = full_path
+            end
+        end
+    end
+    
+    return crt_objects
+end
+```
+
+## Archive Processing
+
+### Static Library Symbol Extraction
+Static libraries (.a files) are archives containing multiple object files. We need to extract symbols from all contained objects.
+
+```julia
+function extract_archive_symbols_native(archive_path::String)::Vector{String}
+    symbols = String[]
+    temp_dir = mktempdir()
+    
+    try
+        # Extract archive contents
+        run(`ar x $archive_path`, dir=temp_dir)
+        
+        # Process each extracted object file
+        for filename in readdir(temp_dir)
+            if endswith(filename, ".o")
+                object_path = joinpath(temp_dir, filename)
+                object_symbols = extract_elf_symbols_native(object_path)
+                append!(symbols, [sym.name for sym in object_symbols])
+            end
+        end
+    finally
+        # Cleanup temporary directory
+        rm(temp_dir, recursive=true, force=true)
+    end
+    
+    return unique(symbols)
+end
+```
+
+## Library Search Optimization
+
+### Library Caching
+```julia
+mutable struct LibraryCache
+    libraries::Dict{String, Vector{LibraryInfo}}
+    symbols::Dict{String, Vector{String}}
+    last_update::Float64
+end
+
+const GLOBAL_LIBRARY_CACHE = LibraryCache(Dict(), Dict(), 0.0)
+
+function get_cached_libraries(search_paths::Vector{String})::Vector{LibraryInfo}
+    cache_key = join(sort(search_paths), ":")
+    current_time = time()
+    
+    # Cache validity: 5 minutes
+    if haskey(GLOBAL_LIBRARY_CACHE.libraries, cache_key) &&
+       (current_time - GLOBAL_LIBRARY_CACHE.last_update) < 300
+        return GLOBAL_LIBRARY_CACHE.libraries[cache_key]
+    end
+    
+    # Refresh cache
+    libraries = find_libraries(search_paths)
+    GLOBAL_LIBRARY_CACHE.libraries[cache_key] = libraries
+    GLOBAL_LIBRARY_CACHE.last_update = current_time
+    
+    return libraries
+end
+```
+
+### Parallel Library Scanning
+```julia
+using Base.Threads
+
+function find_libraries_parallel(search_paths::Vector{String})::Vector{LibraryInfo}
+    # Split paths across available threads
+    path_chunks = collect(Iterators.partition(search_paths, 
+                         ceil(Int, length(search_paths) / nthreads())))
+    
+    # Process chunks in parallel
+    results = Vector{Vector{LibraryInfo}}(undef, length(path_chunks))
+    
+    @threads for i in 1:length(path_chunks)
+        results[i] = find_libraries(collect(path_chunks[i]))
+    end
+    
+    # Combine results
+    return vcat(results...)
+end
+```
+
+## Error Handling
+
+### Library Loading Errors
+```julia
+struct LibraryError <: Exception
+    message::String
+    path::String
+    cause::Union{Exception, Nothing}
+end
+
+function safe_library_analysis(library_path::String)::Union{LibraryInfo, LibraryError}
+    try
+        return analyze_library_file(library_path)
+    catch e
+        return LibraryError("Failed to analyze library", library_path, e)
+    end
+end
+```
+
+### Symbol Resolution Failures
+```julia
+function report_unresolved_symbols(symbols::Vector{String})
+    if !isempty(symbols)
+        @warn "Unresolved symbols found:" symbols
+        for sym in symbols
+            @info "  - $sym: Consider linking with appropriate library (-l<name>)"
+        end
+    end
+end
+```
+
+## Configuration Options
+
+### Environment Variables
+- `LD_LIBRARY_PATH`: Runtime library search paths
+- `LIBRARY_PATH`: Compile-time library search paths  
+- `LD_PRELOAD`: Libraries to preload
+
+### Search Path Precedence
+1. Paths specified with `-L` option
+2. `LIBRARY_PATH` environment variable
+3. Default system paths
+4. `LD_LIBRARY_PATH` (runtime only)
+
+## Performance Considerations
+
+### Symbol Lookup Optimization
+- Cache symbol tables for frequently used libraries
+- Use hash sets for O(1) symbol membership testing
+- Lazy symbol extraction (extract only when needed)
+
+### File System Optimization
+- Cache directory listings to avoid repeated `readdir()` calls
+- Use `stat()` to check file modifications for cache invalidation
+- Parallel directory scanning for large library collections
+
+## Integration Examples
+
+### Basic Library Linking
+```julia
+# Find and link with C library
+libraries = find_libraries(["/usr/lib"], ["c"])
+resolve_symbols_with_libraries(linker, libraries)
+```
+
+### Custom Library Search
+```julia  
+# Add custom search paths and libraries
+custom_paths = ["/opt/mylib/lib", "/home/user/libs"]
+custom_libs = ["mymath", "myutil"]
+libraries = find_libraries(custom_paths, custom_libs)
+```
+
+### System Integration
+```julia
+# Full system library integration
+function link_with_system_libraries!(linker::DynamicLinker)
+    # Find system C library
+    libc = find_default_libc()
+    if libc !== nothing
+        integrate_library(linker, libc)
+    end
+    
+    # Find CRT objects
+    crt_objects = find_crt_objects()
+    for (name, path) in crt_objects
+        load_crt_object(linker, path)
+    end
+end
+```
 
 ### Library Type Detection → `detect_library_type` function
 

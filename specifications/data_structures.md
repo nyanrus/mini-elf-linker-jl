@@ -1,52 +1,300 @@
-# ELF Parser Mathematical Specification
+# ELF Data Structures Specification
 
-## Mathematical Model
+## Overview
 
-```math
-\text{Domain: } \mathcal{D} = \{\text{IO streams}, \text{File paths}, \text{Binary sequences}\}
-\text{Range: } \mathcal{R} = \{\text{ELF structured data}, \text{Error states}\}
-\text{Mapping: } parse: \mathcal{D} \to \mathcal{R}
-```
+This specification defines the data structures used to represent ELF (Executable and Linkable Format) files in memory. These structures correspond directly to the binary format specified in the ELF standard.
 
-## Operations
+## Core Data Structures
 
-```math
-\text{Primary operations: } \{parse\_header, parse\_sections, parse\_symbols, parse\_relocations\}
-\text{Invariants: } \{sequential\_parse, offset\_valid, size\_consistent\}
-\text{Complexity bounds: } O(n + m + r) \text{ where } n,m,r = \text{sections, symbols, relocations}
-```
+### ELF Header
+**Purpose**: Contains basic file information and metadata
+**Size**: 64 bytes (ELF64), 52 bytes (ELF32)
 
-## Implementation Correspondence
-
-### Header Parsing → `parse_elf_header` function
-
-```math
-parse\_header: IO \to ElfHeader \cup \{Error\}
-```
-
-**Direct code correspondence**:
 ```julia
-# Mathematical model: parse_header: IO → ElfHeader ∪ {Error}
-function parse_elf_header(io::IO)::ElfHeader
-    # Implementation of: sequential field extraction with validation
-    magic = read_magic(io)          # ↔ magic verification
-    validate_magic(magic)           # ↔ invariant checking
-    return construct_header(io)     # ↔ structure building
+struct ElfHeader
+    magic::NTuple{4, UInt8}      # File signature: 0x7f, 'E', 'L', 'F'
+    class::UInt8                 # 32-bit (1) or 64-bit (2)
+    data::UInt8                  # Little-endian (1) or big-endian (2)
+    version::UInt8               # ELF version (always 1)
+    osabi::UInt8                 # OS/ABI identification
+    abiversion::UInt8            # ABI version
+    pad::NTuple{7, UInt8}        # Padding bytes (unused)
+    type::UInt16                 # Object file type
+    machine::UInt16              # Target architecture
+    version2::UInt32             # Object file version
+    entry::UInt64                # Entry point address
+    phoff::UInt64                # Program header offset
+    shoff::UInt64                # Section header offset
+    flags::UInt32                # Processor-specific flags
+    ehsize::UInt16               # ELF header size
+    phentsize::UInt16            # Program header entry size
+    phnum::UInt16                # Number of program headers
+    shentsize::UInt16            # Section header entry size
+    shnum::UInt16                # Number of section headers
+    shstrndx::UInt16             # Section name string table index
 end
 ```
 
-**Transformation pipeline**:
-```math
-io \xrightarrow{read\_magic} magic \xrightarrow{validate} verified \xrightarrow{parse\_fields} header
+**Key Fields**:
+- `entry`: Address where execution begins
+- `shoff`: Location of section headers in file
+- `shnum`: Number of sections in the file
+- `shstrndx`: Index of section containing section names
+
+### Section Header
+**Purpose**: Describes individual sections within the ELF file
+**Size**: 64 bytes (ELF64), 40 bytes (ELF32)
+
+```julia
+struct SectionHeader
+    name::UInt32                 # Section name (string table offset)
+    type::UInt32                 # Section type
+    flags::UInt64                # Section attributes
+    addr::UInt64                 # Virtual address in memory
+    offset::UInt64               # File offset of section data
+    size::UInt64                 # Section size in bytes
+    link::UInt32                 # Link to related section
+    info::UInt32                 # Additional section information
+    addralign::UInt64            # Address alignment constraint
+    entsize::UInt64              # Size of each entry (for tables)
+end
 ```
 
-### Section Parsing → `parse_section_headers` function
+**Common Section Types**:
+- `SHT_NULL` (0): Unused section
+- `SHT_PROGBITS` (1): Program data
+- `SHT_SYMTAB` (2): Symbol table
+- `SHT_STRTAB` (3): String table
+- `SHT_RELA` (4): Relocation entries with addends
+- `SHT_REL` (9): Relocation entries without addends
 
-```math
-parse\_sections: IO \times ElfHeader \to List(SectionHeader)
+### Symbol Table Entry
+**Purpose**: Represents symbols (functions, variables, etc.) in the object file
+**Size**: 24 bytes (ELF64), 16 bytes (ELF32)
+
+```julia
+struct SymbolTableEntry
+    name::UInt32                 # Symbol name (string table offset)
+    info::UInt8                  # Symbol type and binding
+    other::UInt8                 # Symbol visibility
+    shndx::UInt16                # Section header index
+    value::UInt64                # Symbol value/address
+    size::UInt64                 # Symbol size
+end
 ```
 
-**Preconditions**:
+**Symbol Binding** (upper 4 bits of `info`):
+- `STB_LOCAL` (0): Local symbol
+- `STB_GLOBAL` (1): Global symbol
+- `STB_WEAK` (2): Weak symbol
+
+**Symbol Type** (lower 4 bits of `info`):
+- `STT_NOTYPE` (0): Unspecified type
+- `STT_OBJECT` (1): Data object
+- `STT_FUNC` (2): Function
+- `STT_SECTION` (3): Section symbol
+- `STT_FILE` (4): Source file name
+
+### Relocation Entry
+**Purpose**: Describes how to modify addresses during linking
+**Size**: 24 bytes (RELA), 16 bytes (REL)
+
+```julia
+struct RelocationEntry
+    offset::UInt64               # Address to modify
+    info::UInt64                 # Relocation type and symbol
+    addend::Int64                # Constant addend (RELA only)
+end
+```
+
+**Common x86-64 Relocation Types**:
+- `R_X86_64_64` (1): Direct 64-bit address
+- `R_X86_64_PC32` (2): PC-relative 32-bit
+- `R_X86_64_PLT32` (4): PLT-relative 32-bit
+- `R_X86_64_GOTPC32` (26): GOT-relative 32-bit
+
+### Program Header
+**Purpose**: Describes memory segments for runtime loading
+**Size**: 56 bytes (ELF64), 32 bytes (ELF32)
+
+```julia
+struct ProgramHeader
+    type::UInt32                 # Segment type
+    flags::UInt32                # Segment flags
+    offset::UInt64               # File offset
+    vaddr::UInt64                # Virtual address
+    paddr::UInt64                # Physical address
+    filesz::UInt64               # Size in file
+    memsz::UInt64                # Size in memory
+    align::UInt64                # Alignment
+end
+```
+
+**Segment Types**:
+- `PT_NULL` (0): Unused entry
+- `PT_LOAD` (1): Loadable segment
+- `PT_DYNAMIC` (2): Dynamic linking information
+- `PT_INTERP` (3): Interpreter path
+- `PT_PHDR` (6): Program header table
+
+## Container Structures
+
+### ElfFile
+**Purpose**: Complete in-memory representation of an ELF file
+
+```julia
+struct ElfFile
+    header::ElfHeader
+    sections::Vector{SectionHeader}
+    symbols::Vector{SymbolTableEntry}
+    relocations::Vector{RelocationEntry}
+    section_data::Dict{Int, Vector{UInt8}}
+    string_tables::Dict{Int, Vector{String}}
+    program_headers::Vector{ProgramHeader}
+end
+```
+
+### DynamicLinker State
+**Purpose**: Maintains linking state across multiple objects
+
+```julia
+mutable struct DynamicLinker
+    objects::Vector{ElfFile}
+    global_symbol_table::Dict{String, SymbolInfo}
+    memory_regions::Vector{MemoryRegion}
+    base_address::UInt64
+    current_address::UInt64
+    temp_files::Vector{String}
+end
+```
+
+## Parsing Functions
+
+### Header Parsing
+```julia
+function parse_elf_header(io::IO)::ElfHeader
+    # Read and validate magic number
+    magic = ntuple(i -> read(io, UInt8), 4)
+    if magic != (0x7f, UInt8('E'), UInt8('L'), UInt8('F'))
+        error("Invalid ELF magic number")
+    end
+    
+    # Read remaining header fields
+    class = read(io, UInt8)
+    data = read(io, UInt8)
+    # ... continue reading all fields
+    
+    return ElfHeader(magic, class, data, ...)
+end
+```
+
+### Section Parsing
+```julia
+function parse_section_headers(io::IO, header::ElfHeader)::Vector{SectionHeader}
+    sections = Vector{SectionHeader}(undef, header.shnum)
+    
+    seek(io, header.shoff)
+    for i in 1:header.shnum
+        sections[i] = read_section_header(io)
+    end
+    
+    return sections
+end
+```
+
+### Symbol Parsing
+```julia
+function parse_symbol_table(io::IO, section::SectionHeader)::Vector{SymbolTableEntry}
+    entry_count = section.size ÷ 24  # 24 bytes per symbol (ELF64)
+    symbols = Vector{SymbolTableEntry}(undef, entry_count)
+    
+    seek(io, section.offset)
+    for i in 1:entry_count
+        symbols[i] = read_symbol_entry(io)
+    end
+    
+    return symbols
+end
+```
+
+## Utility Functions
+
+### Symbol Information Extraction
+```julia
+# Extract binding from symbol info byte
+function st_bind(info::UInt8)::UInt8
+    return (info >> 4) & 0xf
+end
+
+# Extract type from symbol info byte
+function st_type(info::UInt8)::UInt8
+    return info & 0xf
+end
+```
+
+### Relocation Information Extraction
+```julia
+# Extract symbol index from relocation info
+function elf64_r_sym(info::UInt64)::UInt32
+    return UInt32(info >> 32)
+end
+
+# Extract relocation type from relocation info
+function elf64_r_type(info::UInt64)::UInt32
+    return UInt32(info & 0xffffffff)
+end
+```
+
+## Memory Management
+
+### Section Data Storage
+- Raw section data stored in `section_data` dictionary
+- Key: section index, Value: byte array
+- Lazy loading for large sections
+
+### String Table Handling
+- String tables parsed into string vectors
+- Efficient lookup by index
+- Shared between multiple sections
+
+### Temporary File Management
+- Archive extraction creates temporary files
+- Automatic cleanup after linking
+- Error handling for cleanup failures
+
+## Error Handling
+
+### Format Validation
+- Magic number verification
+- Architecture compatibility checks
+- Section boundary validation
+
+### Data Integrity
+- Size consistency checks
+- Offset validation
+- String table bounds checking
+
+### Resource Management
+- Memory allocation limits
+- File handle management
+- Cleanup on errors
+
+## Implementation Notes
+
+### Endianness Handling
+- Currently supports little-endian only
+- Big-endian support planned for future versions
+- Automatic detection from ELF header
+
+### Architecture Support
+- Primary target: x86-64
+- Limited ARM64 support
+- Architecture-specific relocation handling
+
+### Performance Considerations
+- Lazy loading of large sections
+- Memory-mapped file access for huge files
+- Efficient string table implementation
 ```math
 \text{Pre: } header.shoff > 0 \land header.shnum \geq 0 \land io\_valid(io)
 ```

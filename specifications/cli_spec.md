@@ -1,102 +1,340 @@
-# CLI Mathematical Specification
+# Command Line Interface Specification
 
-## Mathematical Model
+## Overview
 
-```math
-\text{Domain: } \mathcal{D} = \{\text{Command-line arguments}, \text{Option strings}, \text{File paths}\}
-\text{Range: } \mathcal{R} = \{\text{LinkerOptions}, \text{Program actions}, \text{Error states}\}
-\text{Mapping: } cli: \mathcal{D} \to \mathcal{R}
+The MiniElfLinker provides a command-line interface compatible with common Unix linkers like `ld`. This specification defines the supported options, argument parsing, and program behavior.
+
+## Basic Usage
+
+```bash
+# Link object files into executable
+mini-elf-linker file1.o file2.o -o program
+
+# Link with libraries
+mini-elf-linker main.o -lc -o program
+
+# Specify library search paths
+mini-elf-linker main.o -L/usr/local/lib -lmylib -o program
+
+# Set base address
+mini-elf-linker main.o --Ttext=0x400000 -o program
 ```
 
-## Operations
+## Supported Options
 
-```math
-\text{Primary operations: } \{parse\_arguments, execute\_linker, show\_help, show\_version\}
-\text{Invariants: } \{option\_consistency, file\_path\_validity, parameter\_completeness\}
-\text{Complexity bounds: } O(n) \text{ where } n = \text{argument count}
-```
+### Output Control
+- `-o <file>`, `--output <file>`: Specify output filename
+- `-o<file>`: Alternative compact form
 
-## Command-Line Parsing Mathematical Model
+### Library Handling
+- `-l<name>`: Link with library `lib<name>.a` or `lib<name>.so`
+- `-L<path>`: Add directory to library search path
+- `--library-path=<path>`: Alternative form for `-L`
 
-### Argument Classification
+### Memory Layout
+- `--Ttext=<address>`: Set text segment base address
+- `--Ttext-segment=<address>`: Alternative form
+- `-e <symbol>`, `--entry=<symbol>`: Set entry point symbol
 
-```math
-classify(arg) = \begin{cases}
-HELP\_FLAG & \text{if } arg \in \{"-h", "--help"\} \\
-VERSION\_FLAG & \text{if } arg = "--version" \\
-OUTPUT\_FLAG & \text{if } arg \in \{"-o", "--output"\} \lor startswith(arg, "-o") \\
-LIBRARY\_PATH & \text{if } arg = "-L" \lor startswith(arg, "-L") \\
-LIBRARY\_NAME & \text{if } arg = "-l" \lor startswith(arg, "-l") \\
-ENTRY\_POINT & \text{if } arg \in \{"-e", "--entry"\} \\
-BASE\_ADDRESS & \text{if } arg \in \{"--Ttext", "--Ttext-segment"\} \\
-LINKAGE\_MODE & \text{if } arg \in \{"-shared", "-static"\} \\
-INPUT\_FILE & \text{if } \neg startswith(arg, "-") \\
-UNKNOWN\_FLAG & \text{otherwise}
-\end{cases}
-```
+### Linking Mode
+- `-static`: Create statically linked executable
+- `-shared`: Create shared library (planned)
 
-### Parameter Extraction
+### Information Options
+- `-h`, `--help`: Show help message
+- `--version`: Show version information
 
-```math
-extract\_parameter(flag, args, index) = \begin{cases}
-args[index + 1] & \text{if } flag \text{ requires argument} \land index + 1 \leq |args| \\
-substring(flag, offset) & \text{if } flag \text{ contains embedded value} \\
-Error & \text{if } flag \text{ requires argument} \land index + 1 > |args| \\
-\emptyset & \text{otherwise}
-\end{cases}
-```
+## Argument Processing
 
-## Implementation Correspondence
-
-### Argument Parsing → `parse_arguments` function
-
-```math
-parse\_arguments: Vector(String) \to LinkerOptions \cup \{Error\}
-```
-
-**Transformation pipeline**:
-```math
-args \xrightarrow{classify} classified\_args \xrightarrow{extract} parameters \xrightarrow{validate} LinkerOptions
-```
-
-**Direct code correspondence**:
+### LinkerOptions Structure
 ```julia
-# Mathematical model: parse_arguments: Vector(String) → LinkerOptions ∪ {Error}
+mutable struct LinkerOptions
+    input_files::Vector{String}
+    output_file::String
+    library_names::Vector{String}
+    library_search_paths::Vector{String}
+    base_address::UInt64
+    entry_symbol::String
+    help::Bool
+    version::Bool
+    static_link::Bool
+end
+```
+
+### Default Values
+```julia
+function LinkerOptions()
+    return LinkerOptions(
+        String[],           # input_files
+        "a.out",            # output_file
+        String[],           # library_names
+        String[],           # library_search_paths
+        0x400000,           # base_address
+        "main",             # entry_symbol
+        false,              # help
+        false,              # version
+        false               # static_link
+    )
+end
+```
+
+### Argument Parser
+```julia
 function parse_arguments(args::Vector{String})::LinkerOptions
-    options = LinkerOptions()                      # ↔ Initialize empty options
+    options = LinkerOptions()
     i = 1
     
-    while i <= length(args)                        # ↔ Linear traversal O(n)
+    while i <= length(args)
         arg = args[i]
         
-        # Mathematical classification and processing
-        if arg == "--help" || arg == "-h"
-            options.help = true                    # ↔ Help flag activation
+        if arg in ["--help", "-h"]
+            options.help = true
+            
         elseif arg == "--version"
-            options.version = true                 # ↔ Version flag activation
-        elseif arg == "-o" || arg == "--output"
-            # Parameter extraction with validation
-            if i + 1 <= length(args)
-                options.output_file = args[i + 1]  # ↔ Output file assignment
-                i += 1                             # ↔ Advance past parameter
-            else
-                error("Option $arg requires an argument")  # ↔ Error state
+            options.version = true
+            
+        elseif arg in ["-o", "--output"]
+            if i + 1 > length(args)
+                error("Option $arg requires an argument")
             end
+            options.output_file = args[i + 1]
+            i += 1
+            
         elseif startswith(arg, "-o")
-            # Embedded parameter extraction
-            options.output_file = arg[3:end]       # ↔ String slicing
-        # ... (additional classifications)
+            options.output_file = arg[3:end]
+            
+        elseif arg == "-L"
+            if i + 1 > length(args)
+                error("Option -L requires an argument")
+            end
+            push!(options.library_search_paths, args[i + 1])
+            i += 1
+            
+        elseif startswith(arg, "-L")
+            push!(options.library_search_paths, arg[3:end])
+            
+        elseif startswith(arg, "-l")
+            push!(options.library_names, arg[3:end])
+            
+        elseif arg in ["-e", "--entry"]
+            if i + 1 > length(args)
+                error("Option $arg requires an argument")
+            end
+            options.entry_symbol = args[i + 1]
+            i += 1
+            
+        elseif startswith(arg, "--Ttext=")
+            addr_str = arg[9:end]
+            options.base_address = parse_address(addr_str)
+            
+        elseif startswith(arg, "--Ttext-segment=")
+            addr_str = arg[17:end]
+            options.base_address = parse_address(addr_str)
+            
+        elseif arg == "-static"
+            options.static_link = true
+            
+        elseif !startswith(arg, "-")
+            # Input file
+            push!(options.input_files, arg)
+            
         else
-            # Input file classification
-            push!(options.input_files, arg)       # ↔ File list accumulation
+            println("Warning: Unknown option '$arg' ignored")
         end
         
-        i += 1                                     # ↔ Iterator advancement
+        i += 1
     end
     
     return options
 end
 ```
+
+## Address Parsing
+
+Supports multiple address formats:
+- Hexadecimal: `0x400000`, `0X400000`
+- Decimal: `4194304`
+- Octal: `0o17777777` (Julia format)
+
+```julia
+function parse_address(addr_str::String)::UInt64
+    if startswith(addr_str, "0x") || startswith(addr_str, "0X")
+        return parse(UInt64, addr_str[3:end], base=16)
+    elseif startswith(addr_str, "0o")
+        return parse(UInt64, addr_str[3:end], base=8)
+    else
+        return parse(UInt64, addr_str)
+    end
+end
+```
+
+## Help System
+
+### Help Message
+```
+Usage: mini-elf-linker [OPTIONS] file1.o file2.o ...
+
+Options:
+  -o <file>              Write output to <file> (default: a.out)
+  -l<name>               Link with library lib<name>.a
+  -L<path>               Add <path> to library search paths
+  --Ttext=<address>      Set base address for text segment
+  -e <symbol>            Set entry point symbol (default: main)
+  -static                Create statically linked executable
+  -h, --help             Show this help message
+  --version              Show version information
+
+Examples:
+  mini-elf-linker main.o utils.o -o myprogram
+  mini-elf-linker main.o -lc -L/usr/local/lib -o myprogram
+  mini-elf-linker main.o --Ttext=0x10000000 -o myprogram
+```
+
+### Version Information
+```
+MiniElfLinker v0.1.0
+Educational ELF linker implementation in Julia
+Target: x86_64-linux-gnu
+```
+
+## Error Messages
+
+### Missing Arguments
+```
+Error: Option '-o' requires an argument
+Error: Option '-L' requires an argument  
+Error: Option '-e' requires an argument
+```
+
+### Invalid Input
+```
+Error: Invalid address format: '0xGGG'
+Error: File not found: 'nonexistent.o'
+Error: Cannot write to output file: '/root/output'
+```
+
+### Parsing Errors
+```
+Error: Failed to parse 'corrupted.o': Invalid ELF magic number
+Error: Unsupported ELF architecture in 'arm_file.o'
+```
+
+## Program Flow
+
+### Main Function
+```julia
+function main(args=ARGS)
+    try
+        options = parse_arguments(args)
+        
+        if options.help
+            show_help()
+            return 0
+        end
+        
+        if options.version
+            show_version()
+            return 0
+        end
+        
+        if isempty(options.input_files)
+            println("Error: No input files specified")
+            return 1
+        end
+        
+        return execute_linker(options)
+        
+    catch e
+        println("Error: $e")
+        return 1
+    end
+end
+```
+
+### Linker Execution
+```julia
+function execute_linker(options::LinkerOptions)::Int
+    try
+        # Create linker with specified base address
+        linker = DynamicLinker(base_address=options.base_address)
+        
+        # Load input objects
+        for filename in options.input_files
+            load_object(linker, filename)
+        end
+        
+        # Link objects with libraries
+        link_objects(linker, 
+            library_search_paths=options.library_search_paths,
+            library_names=options.library_names)
+        
+        # Generate executable
+        link_to_executable(
+            options.input_files, 
+            options.output_file,
+            base_address=options.base_address,
+            entry_symbol=options.entry_symbol,
+            library_search_paths=options.library_search_paths,
+            library_names=options.library_names
+        )
+        
+        return 0
+        
+    catch e
+        println("Linking failed: $e")
+        return 1
+    end
+end
+```
+
+## Environment Variables
+
+### Library Search
+- `LD_LIBRARY_PATH`: Additional library search directories
+- `LIBRARY_PATH`: Compile-time library search paths
+
+### Configuration
+- `MINI_ELF_DEBUG`: Enable debug output (values: 0, 1)
+- `MINI_ELF_TEMP_DIR`: Temporary directory for extracted archives
+
+## Exit Codes
+
+- `0`: Success
+- `1`: General error (parsing, linking, file I/O)
+- `2`: Invalid command line arguments
+- `3`: File not found or permission denied
+
+## Compatibility Notes
+
+### GNU ld Compatibility
+- Basic option syntax matches `ld`
+- Subset of most common options
+- Different error message format
+
+### LLD Compatibility
+- Similar modern option handling
+- Compatible address format parsing
+- Shared basic workflow
+
+### Limitations
+- No linker script support
+- Limited relocation types
+- No plugin system
+- No LTO (Link Time Optimization)
+
+## Future Extensions
+
+### Planned Options
+- `--dynamic-linker=<path>`: Set dynamic linker path
+- `--rpath=<path>`: Set runtime library search path
+- `--soname=<name>`: Set shared library name
+- `-pie`: Create position-independent executable
+
+### Advanced Features
+- Linker script parsing
+- Section manipulation options
+- Symbol versioning support
+- Garbage collection of unused sections
 
 ### Library Path Processing → Library search path handling
 

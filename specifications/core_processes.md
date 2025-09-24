@@ -1,52 +1,197 @@
-# MiniElfLinker Mathematical Specification
+# Core Linker Processes Specification
 
-## Mathematical Model
+## Overview
 
-```math
-\text{Domain: } \mathcal{D} = \{\text{ELF object files}, \text{Symbol tables}, \text{Memory layouts}, \text{Library paths}\}
-\text{Range: } \mathcal{R} = \{\text{Executable binaries}, \text{Resolved symbols}, \text{Memory mappings}\}
-\text{Mapping: } \mathcal{L}: \mathcal{D} \to \mathcal{R}
+This specification defines the core processes that transform multiple object files into a single executable. The MiniElfLinker implements these processes using a clear pipeline architecture.
+
+## Process Pipeline
+
+### 1. Object File Loading
+**Purpose**: Load and validate ELF object files
+**Input**: List of file paths
+**Output**: Parsed ELF objects with symbol tables
+
+```julia
+function load_objects(filenames)
+    objects = []
+    for filename in filenames
+        elf_object = parse_elf_file(filename)
+        push!(objects, elf_object)
+    end
+    return objects
+end
 ```
 
-**Complete Linking Function**:
-```math
-\mathcal{L}(O, S, M, P) = (E, \Sigma', \mathcal{M}')
-```
-where:
-- $O = \{o_1, o_2, \ldots, o_n\}$ is the set of object files
-- $S = \{s_1, s_2, \ldots, s_m\}$ is the set of unresolved symbols  
-- $M$ is the initial memory layout specification
-- $P = \{p_1, p_2, \ldots, p_k\}$ is the set of library search paths
-- $E$ is the resulting executable binary
-- $\Sigma'$ is the resolved symbol table
-- $\mathcal{M}'$ is the final memory mapping
+**Responsibilities**:
+- File existence validation
+- ELF format verification
+- Section header parsing
+- Symbol table extraction
 
-## Operations
+### 2. Symbol Resolution
+**Purpose**: Resolve all undefined symbols by finding their definitions
+**Input**: Parsed objects + library search paths
+**Output**: Complete symbol table with resolved addresses
 
-```math
-\text{Primary operations: } \{\phi_{parse}, \phi_{resolve}, \phi_{relocate}, \phi_{serialize}\}
-\text{Invariants: } \{symbol\_uniqueness, memory\_consistency, format\_compliance\}
-\text{Complexity bounds: } O(n \cdot s + r \cdot \log m + k \cdot p)
-```
-
-**Operation Algebra**:
-```math
-\begin{align}
-\phi_{parse} &: \text{FilePath} \to \text{ElfObject} \\
-\phi_{resolve} &: \text{ElfObject}^n \times \text{LibraryPath}^k \to \text{SymbolTable} \\
-\phi_{relocate} &: \text{SymbolTable} \times \text{RelocationEntry}^r \to \text{MemoryLayout} \\
-\phi_{serialize} &: \text{MemoryLayout} \to \text{ExecutableBinary}
-\end{align}
-```
-
-**Function Composition**:
-```math
-\mathcal{L} = \phi_{serialize} \circ \phi_{relocate} \circ \phi_{resolve} \circ \phi_{parse}^n
+```julia
+function resolve_symbols(linker::DynamicLinker)
+    unresolved = String[]
+    for (name, symbol) in linker.global_symbol_table
+        if !symbol.defined
+            # Search for definition in loaded objects or libraries
+            definition = find_symbol_definition(name, linker)
+            if definition !== nothing
+                symbol.value = definition.value
+                symbol.defined = true
+            else
+                push!(unresolved, name)
+            end
+        end
+    end
+    return unresolved
+end
 ```
 
-## Implementation Correspondence
+**Responsibilities**:
+- Symbol definition lookup
+- Address assignment
+- Undefined symbol tracking
+- Library symbol resolution
 
-### Linker State Space → `DynamicLinker` struct
+### 3. Memory Layout Allocation
+**Purpose**: Assign memory addresses to all sections
+**Input**: Resolved symbols and sections
+**Output**: Memory layout with assigned addresses
+
+```julia
+function allocate_memory_regions!(linker)
+    current_address = linker.base_address
+    
+    for object in linker.objects
+        for section in object.sections
+            if section.type != SHT_NULL
+                section.allocated_address = current_address
+                current_address += section.size
+            end
+        end
+    end
+end
+```
+
+**Responsibilities**:
+- Address space management
+- Section alignment
+- Memory region calculation
+- Address assignment
+
+### 4. Relocation Application
+**Purpose**: Update addresses in object code based on final memory layout
+**Input**: Memory layout + relocation entries
+**Output**: Relocated object code
+
+```julia
+function perform_relocations!(linker)
+    for object in linker.objects
+        for relocation in object.relocations
+            target_address = calculate_target_address(relocation, linker)
+            apply_relocation(relocation, target_address, object.data)
+        end
+    end
+end
+```
+
+**Responsibilities**:
+- Relocation type handling
+- Address calculation
+- Binary patching
+- Reference updating
+
+### 5. Executable Generation
+**Purpose**: Serialize linked code into final executable
+**Input**: Relocated objects + memory layout
+**Output**: ELF executable file
+
+```julia
+function write_executable(linker, output_filename)
+    executable_data = serialize_sections(linker)
+    program_headers = create_program_headers(linker)
+    elf_header = create_elf_header(linker, program_headers)
+    
+    write_elf_file(output_filename, elf_header, program_headers, executable_data)
+end
+```
+
+**Responsibilities**:
+- ELF header creation
+- Program header generation
+- Section serialization
+- File writing
+
+## Error Handling
+
+Each process includes comprehensive error handling:
+
+### Load Errors
+- File not found
+- Invalid ELF format
+- Unsupported architecture
+
+### Resolution Errors  
+- Undefined symbols
+- Circular dependencies
+- Library not found
+
+### Memory Errors
+- Address conflicts
+- Insufficient space
+- Invalid alignment
+
+### Relocation Errors
+- Unknown relocation types
+- Invalid targets
+- Overflow conditions
+
+## Configuration Options
+
+### Base Address
+- Default: `0x400000` (typical for executables)
+- Configurable via `--Ttext` option
+- Must be page-aligned
+
+### Entry Point
+- Default: `_start` symbol
+- Fallback: `main` with runtime setup
+- Configurable via `--entry` option
+
+### Library Handling
+- System library integration
+- Custom search paths
+- Static vs dynamic linking
+
+## Performance Characteristics
+
+### Time Complexity
+- Object loading: O(total file size)
+- Symbol resolution: O(symbols × libraries)
+- Memory allocation: O(sections)
+- Relocation: O(relocations)
+- Serialization: O(final executable size)
+
+### Space Complexity
+- Symbol table: O(unique symbols)
+- Memory layout: O(sections)
+- Temporary data: O(largest object file)
+
+## Implementation Status
+
+- ✅ Object file loading
+- ✅ Basic symbol resolution
+- ✅ Memory layout allocation
+- ✅ Simple relocations (R_X86_64_64, R_X86_64_PC32)
+- ✅ Executable generation
+- ⚠️ Advanced relocations (partial)
+- ⚠️ Dynamic linking (basic)
+- ❌ Shared library creation
 
 ```math
 \mathcal{L}_{state} = \langle \mathcal{O}, \Sigma, \mathcal{M}, \alpha_{base}, \alpha_{next}, \mathcal{T} \rangle
