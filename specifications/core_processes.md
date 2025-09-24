@@ -1,52 +1,390 @@
-# MiniElfLinker Mathematical Specification
+# Core Linker Processes Specification
 
-## Mathematical Model
+## Overview
 
-```math
-\text{Domain: } \mathcal{D} = \{\text{ELF object files}, \text{Symbol tables}, \text{Memory layouts}, \text{Library paths}\}
-\text{Range: } \mathcal{R} = \{\text{Executable binaries}, \text{Resolved symbols}, \text{Memory mappings}\}
-\text{Mapping: } \mathcal{L}: \mathcal{D} \to \mathcal{R}
+This specification defines the core processes that transform multiple object files into a single executable. The MiniElfLinker implements these processes using mathematically-driven algorithms for critical operations and practical Julia code for structural components.
+
+## Non-Algorithmic Components (Julia Direct Documentation)
+
+### Linker State Management
+```julia
+"""
+DynamicLinker manages the complete linking state and coordination between components.
+
+Fields:
+- objects: Vector of parsed ELF files
+- global_symbol_table: Dict mapping symbol names to their information
+- memory_regions: Allocated memory segments
+- base_address: Starting address for executable layout
+- library_search_paths: Directories to search for libraries
+"""
+mutable struct DynamicLinker
+    objects::Vector{ElfFile}
+    global_symbol_table::Dict{String, SymbolInfo}
+    memory_regions::Vector{MemoryRegion}
+    base_address::UInt64
+    current_address::UInt64
+    library_search_paths::Vector{String}
+    library_names::Vector{String}
+    temp_files::Vector{String}
+    
+    function DynamicLinker(; base_address::UInt64 = 0x400000)
+        new(
+            ElfFile[],
+            Dict{String, SymbolInfo}(),
+            MemoryRegion[],
+            base_address,
+            base_address + 0x1000,  # Start with standard offset
+            String[],
+            String[],
+            String[]
+        )
+    end
+end
 ```
 
-**Complete Linking Function**:
-```math
-\mathcal{L}(O, S, M, P) = (E, \Sigma', \mathcal{M}')
+### Object Loading Interface
+```julia
+"""
+Load and validate ELF object files.
+Handles file I/O, format validation, and initial parsing.
+Non-algorithmic: straightforward file processing without complex algorithms.
+"""
+function load_object(linker::DynamicLinker, filename::String)
+    try
+        if !isfile(filename)
+            throw(ArgumentError("File not found: $filename"))
+        end
+        
+        # Detect file type
+        file_type = detect_file_type_by_magic(filename)
+        
+        if file_type == "unknown"
+            throw(ArgumentError("Unsupported file type"))
+        end
+        
+        # Parse ELF file
+        elf_object = parse_elf_file(filename)
+        push!(linker.objects, elf_object)
+        
+        println("Loaded object: $filename")
+        return true
+        
+    catch e
+        @error "Failed to load object $filename: $e"
+        return false
+    end
+end
 ```
+
+## Algorithmic Critical Components (Mathematical Analysis)
+
+### Symbol Resolution Algorithm
+
+**Mathematical Model**: The symbol resolution process can be modeled as a mapping from undefined symbols to their definitions across the global symbol space.
+
+```math
+\text{Let } \mathcal{S} = \{s_1, s_2, \ldots, s_n\} \text{ be the set of all symbols}
+```
+
+```math
+\text{Let } \mathcal{U} \subseteq \mathcal{S} \text{ be undefined symbols}
+```
+
+```math
+\text{Let } \mathcal{D} \subseteq \mathcal{S} \text{ be defined symbols}
+```
+
+**Resolution Function**:
+```math
+\delta_{resolve}: \mathcal{U} \to \mathcal{D} \cup \{\perp\}
+```
+
+where $\perp$ represents unresolvable symbols.
+
+**Complexity Analysis**:
+```math
+\text{Current implementation: } T(n, m) = O(n \times m)
+```
+where $n = |\mathcal{U}|$ and $m = |\mathcal{D}|$
+
+**Optimization Potential**:
+```math
+\text{Hash table optimization: } T(n, m) = O(n + m)
+```
+
+**Implementation with Mathematical Correspondence**:
+```julia
+"""
+Mathematical model: δ_resolve: 𝒰 → 𝒟 ∪ {⊥}
+Resolve undefined symbols by finding their definitions in the global symbol space.
+"""
+function δ_resolve_symbols(linker::DynamicLinker)::Vector{String}
+    𝒰_unresolved = String[]  # Mathematical notation for unresolved set
+    
+    # Iterate over symbol space: ∀(name, symbol) ∈ 𝒮
+    for (symbol_name, symbol_info) ∈ linker.global_symbol_table
+        if !symbol_info.defined
+            # Apply resolution function: δ_resolve(symbol_name)
+            definition = find_symbol_definition_in_domain(symbol_name, linker)
+            
+            if definition !== nothing
+                # Symbol found in domain 𝒟: update mapping
+                symbol_info.value = definition.value
+                symbol_info.defined = true
+                symbol_info.source = definition.source
+            else
+                # Symbol maps to ⊥: add to unresolved set
+                push!(𝒰_unresolved, symbol_name)
+            end
+        end
+    end
+    
+    return 𝒰_unresolved
+end
+```
+
+### Memory Allocation Algorithm
+
+**Mathematical Model**: Memory allocation assigns non-overlapping address ranges to sections.
+
+```math
+\text{Let } \mathcal{M} = [α_{base}, α_{max}] \text{ be the memory address space}
+```
+
+```math
+\text{Let } \mathcal{R} = \{r_1, r_2, \ldots, r_k\} \text{ be memory regions}
+```
+
+**Allocation Constraint**:
+```math
+\forall i, j \in [1, k], i \neq j: r_i \cap r_j = \emptyset
+```
+
+**Allocation Function**:
+```math
+\phi_{allocate}: \mathcal{S}_{sections} \to \mathcal{R}_{regions}
+```
+
+**Current Complexity**:
+```math
+T_{naive}(k) = O(k^2) \text{ for overlap detection}
+```
+
+**Optimization Potential**:
+```math
+T_{spatial}(k) = O(k \log k) \text{ using interval trees}
+```
+
+**Implementation**:
+```julia
+"""
+Mathematical model: φ_allocate: 𝒮_sections → ℛ_regions
+Allocate non-overlapping memory regions with constraint ∀i,j: rᵢ ∩ rⱼ = ∅
+"""
+function φ_allocate_memory_regions!(linker::DynamicLinker)
+    α_current = linker.base_address + 0x1000  # Starting address α_base + offset
+    
+    for object ∈ linker.objects
+        for section ∈ object.sections
+            if section.type != SHT_NULL && (section.flags & SHF_ALLOC) != 0
+                # Apply allocation function: φ_allocate(section) → region
+                region_size = max(section.size, section.addralign)
+                
+                # Ensure alignment constraint: α_current ≡ 0 (mod addralign)
+                if section.addralign > 0
+                    α_current = align_address(α_current, section.addralign)
+                end
+                
+                # Create region: rᵢ = [α_current, α_current + size)
+                region = MemoryRegion(
+                    start_address=α_current,
+                    size=region_size,
+                    section_name=get_section_name(section),
+                    permissions=calculate_permissions(section.flags)
+                )
+                
+                push!(linker.memory_regions, region)
+                section.allocated_address = α_current
+                
+                # Advance to next available address: α_current ← α_current + size
+                α_current += region_size
+            end
+        end
+    end
+    
+    linker.current_address = α_current
+end
+
+# Mathematical utility: address alignment function
+function align_address(α_address::UInt64, alignment::UInt64)::UInt64
+    return (α_address + alignment - 1) & ~(alignment - 1)
+end
+```
+
+### Relocation Application Algorithm
+
+**Mathematical Model**: Relocations apply address transformations to object code.
+
+```math
+\text{Let } \mathcal{T} = \{t_1, t_2, \ldots, t_r\} \text{ be relocation transformations}
+```
+
+**Relocation Function**:
+```math
+\rho: \mathcal{A}_{addresses} \times \mathcal{T}_{type} \times \mathcal{V}_{value} \to \mathcal{A}_{new}
+```
+
+**Type-Specific Transformations**:
+```math
+\rho_{R\_X86\_64\_64}(A, S, P) = S + A
+```
+```math
+\rho_{R\_X86\_64\_PC32}(A, S, P) = S + A - P
+```
+
 where:
-- $O = \{o_1, o_2, \ldots, o_n\}$ is the set of object files
-- $S = \{s_1, s_2, \ldots, s_m\}$ is the set of unresolved symbols  
-- $M$ is the initial memory layout specification
-- $P = \{p_1, p_2, \ldots, p_k\}$ is the set of library search paths
-- $E$ is the resulting executable binary
-- $\Sigma'$ is the resolved symbol table
-- $\mathcal{M}'$ is the final memory mapping
+- $A$ = addend
+- $S$ = symbol value  
+- $P$ = place (address being relocated)
 
-## Operations
-
-```math
-\text{Primary operations: } \{\phi_{parse}, \phi_{resolve}, \phi_{relocate}, \phi_{serialize}\}
-\text{Invariants: } \{symbol\_uniqueness, memory\_consistency, format\_compliance\}
-\text{Complexity bounds: } O(n \cdot s + r \cdot \log m + k \cdot p)
+**Implementation**:
+```julia
+"""
+Mathematical model: ρ: 𝒜_addresses × 𝒯_type × 𝒱_value → 𝒜_new
+Apply relocation transformations based on mathematical relocation functions.
+"""
+function ρ_perform_relocations!(linker::DynamicLinker)
+    for object ∈ linker.objects
+        for relocation ∈ object.relocations
+            # Extract relocation parameters
+            symbol_index = elf64_r_sym(relocation.info)
+            relocation_type = elf64_r_type(relocation.info)
+            
+            # Get symbol value S from global symbol table
+            symbol_name = get_symbol_name(object, symbol_index)
+            S_symbol_value = get_symbol_value(linker, symbol_name)
+            
+            # Calculate place P (address being relocated)
+            P_place = get_section_address(object, relocation.offset)
+            A_addend = relocation.addend
+            
+            # Apply type-specific transformation ρ_type(A, S, P)
+            target_value = if relocation_type == R_X86_64_64
+                # ρ_R_X86_64_64(A, S, P) = S + A
+                S_symbol_value + A_addend
+            elseif relocation_type == R_X86_64_PC32
+                # ρ_R_X86_64_PC32(A, S, P) = S + A - P
+                Int32(S_symbol_value + A_addend - P_place)
+            else
+                throw(ArgumentError("Unsupported relocation type: $relocation_type"))
+            end
+            
+            # Apply transformation to object code
+            apply_relocation_value(object, relocation.offset, target_value, relocation_type)
+        end
+    end
+end
 ```
 
-**Operation Algebra**:
+## Process Composition and Pipeline
+
+**Mathematical Composition**: The complete linking process is a composition of mathematical functions:
+
+```math
+\mathcal{L} = \omega_{serialize} \circ \rho_{relocate} \circ \phi_{allocate} \circ \delta_{resolve} \circ \pi_{parse}
+```
+
+Where:
+- $\pi_{parse}$: Parse ELF objects
+- $\delta_{resolve}$: Resolve symbols  
+- $\phi_{allocate}$: Allocate memory
+- $\rho_{relocate}$: Apply relocations
+- $\omega_{serialize}$: Generate executable
+
+**Implementation**:
+```julia
+"""
+Mathematical composition: ℒ = ω_serialize ∘ ρ_relocate ∘ φ_allocate ∘ δ_resolve ∘ π_parse
+Complete linking pipeline implementing the mathematical function composition.
+"""
+function execute_linking_pipeline(input_files::Vector{String}, output_file::String; 
+                                 base_address::UInt64 = 0x400000)
+    linker = DynamicLinker(base_address=base_address)
+    
+    # π_parse: Parse input objects
+    for filename ∈ input_files
+        load_object(linker, filename)
+    end
+    
+    # δ_resolve: Resolve symbols
+    𝒰_unresolved = δ_resolve_symbols(linker)
+    if !isempty(𝒰_unresolved)
+        @warn "Unresolved symbols: $𝒰_unresolved"
+    end
+    
+    # φ_allocate: Allocate memory regions  
+    φ_allocate_memory_regions!(linker)
+    
+    # ρ_relocate: Apply relocations
+    ρ_perform_relocations!(linker)
+    
+    # ω_serialize: Generate executable
+    ω_serialize_executable(linker, output_file)
+    
+    return linker
+end
+```
+
+## Error Handling and Robustness (Non-Algorithmic)
+
+```julia
+"""
+Error handling for linking pipeline.
+Non-algorithmic: straightforward error management and reporting.
+"""
+struct LinkingError <: Exception
+    stage::String
+    message::String
+    cause::Union{Exception, Nothing}
+end
+
+function safe_linking_execution(input_files, output_file; kwargs...)
+    try
+        return execute_linking_pipeline(input_files, output_file; kwargs...)
+    catch e
+        if isa(e, ArgumentError)
+            throw(LinkingError("validation", "Invalid input: $(e.msg)", e))
+        elseif isa(e, SystemError)
+            throw(LinkingError("file_io", "File system error: $(e.prefix)", e))
+        else
+            throw(LinkingError("unknown", "Unexpected error: $e", e))
+        end
+    end
+end
+```
+
+## Performance Analysis and Optimization Opportunities
+
+**Current Complexity Bounds**:
 ```math
 \begin{align}
-\phi_{parse} &: \text{FilePath} \to \text{ElfObject} \\
-\phi_{resolve} &: \text{ElfObject}^n \times \text{LibraryPath}^k \to \text{SymbolTable} \\
-\phi_{relocate} &: \text{SymbolTable} \times \text{RelocationEntry}^r \to \text{MemoryLayout} \\
-\phi_{serialize} &: \text{MemoryLayout} \to \text{ExecutableBinary}
+T_{parse}(f) &= O(f \times s) \text{ where } f = \text{files, } s = \text{avg sections} \\
+T_{resolve}(n, m) &= O(n \times m) \text{ where } n = \text{undefined, } m = \text{defined} \\
+T_{allocate}(k) &= O(k^2) \text{ where } k = \text{sections (overlap check)} \\
+T_{relocate}(r) &= O(r) \text{ where } r = \text{relocations}
 \end{align}
 ```
 
-**Function Composition**:
+**Optimization Potential**:
 ```math
-\mathcal{L} = \phi_{serialize} \circ \phi_{relocate} \circ \phi_{resolve} \circ \phi_{parse}^n
+\begin{align}
+T_{resolve\_opt}(n, m) &= O(n + m) \text{ using hash tables} \\
+T_{allocate\_opt}(k) &= O(k \log k) \text{ using spatial data structures} \\
+T_{total\_current} &= O(f \times s + n \times m + k^2 + r) \\
+T_{total\_optimized} &= O(f \times s + n + m + k \log k + r)
+\end{align}
 ```
-
-## Implementation Correspondence
-
-### Linker State Space → `DynamicLinker` struct
 
 ```math
 \mathcal{L}_{state} = \langle \mathcal{O}, \Sigma, \mathcal{M}, \alpha_{base}, \alpha_{next}, \mathcal{T} \rangle
