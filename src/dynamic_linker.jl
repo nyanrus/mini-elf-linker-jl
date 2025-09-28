@@ -116,9 +116,9 @@ function load_object(linker::DynamicLinker, filename::String)
     file_type = detect_file_type_by_magic(filename)
     
     if file_type == ELF_FILE
-        return delta_load_elf_object(linker, filename)        # ↔ δ_load_elf
+        return load_elf_object(linker, filename)        # ↔ δ_load_elf
     elseif file_type == AR_FILE
-        return delta_load_archive_objects(linker, filename)   # ↔ δ_load_archive
+        return load_archive_objects(linker, filename)   # ↔ δ_load_archive
     else
         println("Failed to load object $filename: Unsupported file type")
         return false
@@ -461,7 +461,7 @@ function resolve_symbols(linker::DynamicLinker)
                 for obj_symbol in obj.symbols               # ↔ symbol search
                     obj_symbol_name = get_string_from_table(obj.symbol_string_table, obj_symbol.name)
                     # Check for matching defined symbol: def.name = name ∧ defined(def)
-                    if obj_symbol_name == symbol_name && obj_symbol.section != 0  # ↔ definition check
+                    if obj_symbol_name == symbol_name && obj_symbol.shndx != 0  # ↔ definition check
                         found_definition = obj_symbol       # ↔ definition found
                         break
                     end
@@ -473,7 +473,7 @@ function resolve_symbols(linker::DynamicLinker)
                 # Update symbol with definition: Σ'(name) = address(def)
                 updated_symbol = Symbol(
                     symbol_name, found_definition.value, found_definition.size,
-                    found_definition.binding, found_definition.type, found_definition.section,
+                    st_bind(found_definition.info), st_type(found_definition.info), found_definition.shndx,
                     true, symbol.source_file                # ↔ defined = true
                 )
                 linker.global_symbol_table[symbol_name] = updated_symbol  # ↔ Σ' update
@@ -534,15 +534,15 @@ function allocate_memory_regions!(linker::DynamicLinker)
                 end
                 
                 push!(linker.memory_regions, region)
-                current_address = aligned_addr + section.size
+                alpha_current = alpha_aligned + section.size
                 
                 section_name = get_string_from_table(elf_file.string_table, section.name)
-                println("Allocated memory region for section '$section_name' (index $elf_section_index) at 0x$(string(aligned_addr, base=16))")
+                println("Allocated memory region for section '$section_name' (index $elf_section_index) at 0x$(string(alpha_aligned, base=16))")
             end
         end
     end
     
-    linker.next_address = current_address
+    linker.next_address = alpha_current
     
     # Update symbol addresses to be absolute
     update_symbol_addresses!(linker, section_address_map)
