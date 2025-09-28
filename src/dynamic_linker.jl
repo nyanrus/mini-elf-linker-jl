@@ -52,9 +52,62 @@ mutable struct MemoryRegion
 end
 
 """
+    PLTEntry
+
+Mathematical model: PLT entry for procedure linkage table
+Represents a single PLT (Procedure Linkage Table) entry for dynamic symbol resolution.
+
+PLT entry structure (x86-64):
+```asm
+jmp *GOT[n]     # Jump to GOT entry
+push index      # Push relocation index
+jmp PLT[0]      # Jump to resolver
+```
+"""
+struct PLTEntry
+    symbol_name::String    # Symbol this entry resolves
+    got_offset::UInt64     # Offset into GOT table  
+    plt_offset::UInt64     # Offset of this PLT entry
+    reloc_index::UInt32    # Index for dynamic relocations
+end
+
+"""
+    GlobalOffsetTable
+
+Mathematical model: GOT = {(symbol, address)_i}_{i=1}^n
+Global Offset Table for dynamic symbol resolution.
+
+Mathematical properties:
+- Each symbol has exactly one GOT entry: ∀s ∈ Symbols: |GOT[s]| = 1
+- GOT addresses are runtime-resolved: GOT[s] = resolve_runtime(s)
+"""
+mutable struct GlobalOffsetTable
+    entries::Dict{String, UInt64}     # symbol_name → GOT offset
+    base_address::UInt64              # Base address of GOT
+    size::UInt64                      # Total size of GOT
+end
+
+"""
+    ProcedureLinkageTable
+
+Mathematical model: PLT = {PLTEntry_i}_{i=1}^n
+Procedure Linkage Table for lazy symbol resolution.
+
+PLT structure:
+- PLT[0]: resolver stub  
+- PLT[i]: individual symbol stubs
+"""
+mutable struct ProcedureLinkageTable
+    entries::Vector{PLTEntry}         # PLT entries
+    base_address::UInt64              # Base address of PLT
+    size::UInt64                      # Total size of PLT
+    got::GlobalOffsetTable            # Associated GOT
+end
+
+"""
     DynamicLinker
 
-Mathematical model: S_Δ = ⟨O, Σ, M, α_base, α_next, T⟩
+Mathematical model: S_Δ = ⟨O, Σ, M, α_base, α_next, T, GOT, PLT⟩
 Main dynamic linker state representing the complete linking context.
 
 State space components:
@@ -64,6 +117,8 @@ State space components:
 - base_address ∈ ℕ₆₄: α_base virtual memory base
 - next_address ∈ ℕ₆₄: α_next next available address
 - temp_files ∈ Vector{String}: T temporary file cleanup set
+- got ∈ GlobalOffsetTable: Global Offset Table for dynamic symbols
+- plt ∈ ProcedureLinkageTable: Procedure Linkage Table for lazy resolution
 """
 mutable struct DynamicLinker
     loaded_objects::Vector{ElfFile}           # ↔ O = {o_i}
@@ -72,25 +127,29 @@ mutable struct DynamicLinker
     base_address::UInt64                      # ↔ α_base ∈ ℕ₆₄
     next_address::UInt64                      # ↔ α_next ∈ ℕ₆₄
     temp_files::Vector{String}                # ↔ T cleanup set
+    got::Union{GlobalOffsetTable, Nothing}   # ↔ GOT for dynamic symbols
+    plt::Union{ProcedureLinkageTable, Nothing} # ↔ PLT for lazy resolution
 end
 
 """
     DynamicLinker(base_address::UInt64 = UInt64(0x400000)) -> DynamicLinker
 
 Mathematical model: S_Δ initialization
-Create a new dynamic linker instance with initial state S_Δ = ⟨∅, ∅, ∅, α_base, α_base, ∅⟩
+Create a new dynamic linker instance with initial state S_Δ = ⟨∅, ∅, ∅, α_base, α_base, ∅, ∅, ∅⟩
 
 Base address α_base defaults to 0x400000 (standard Linux executable base).
 """
 function DynamicLinker(alpha_base::UInt64 = UInt64(0x400000))
-    # Initialize linker state: S_Δ = ⟨O, Σ, M, α_base, α_next, T⟩
+    # Initialize linker state: S_Δ = ⟨O, Σ, M, α_base, α_next, T, GOT, PLT⟩
     return DynamicLinker(
         ElfFile[],                    # ↔ O = ∅ (empty object set)
         Dict{String, Symbol}(),       # ↔ Σ = ∅ (empty symbol table)
         MemoryRegion[],              # ↔ M = ∅ (empty memory regions)
         alpha_base,                   # ↔ α_base virtual memory base
         alpha_base,                   # ↔ α_next = α_base initially
-        String[]                      # ↔ T = ∅ (empty temp files)
+        String[],                     # ↔ T = ∅ (empty temp files)
+        nothing,                      # ↔ GOT = ∅ initially
+        nothing                       # ↔ PLT = ∅ initially
     )
 end
 
@@ -544,6 +603,58 @@ function allocate_memory_regions!(linker::DynamicLinker)
     
     linker.next_address = alpha_current
     
+    # Allocate GOT memory region if present
+    if linker.got !== nothing
+        # Assign actual base address to GOT
+        got_base = align_address(alpha_current, UInt64(8))  # 8-byte align
+        linker.got.base_address = got_base
+        alpha_current = got_base + linker.got.size
+        
+        # Update GOT entries to use absolute addresses
+        for (symbol, relative_offset) in linker.got.entries
+            linker.got.entries[symbol] = got_base + relative_offset
+        end
+        
+        got_region = MemoryRegion(
+            zeros(UInt8, linker.got.size),     # Zero-initialized GOT entries
+            got_base,
+            linker.got.size,
+            0x6  # R+W permissions (GOT is writable for runtime resolution)
+        )
+        push!(linker.memory_regions, got_region)
+        println("Allocated GOT memory region at 0x$(string(got_base, base=16)) ($(linker.got.size) bytes)")
+    end
+    
+    # Allocate PLT memory region if present
+    if linker.plt !== nothing
+        # Assign actual base address to PLT
+        plt_base = align_address(alpha_current, UInt64(16))  # 16-byte align
+        linker.plt.base_address = plt_base
+        alpha_current = plt_base + linker.plt.size
+        
+        # Update PLT entries to use absolute addresses
+        for entry in linker.plt.entries
+            entry_plt_offset = plt_base + entry.plt_offset
+            # Note: entry.plt_offset was relative, now make it absolute
+            # Actually, PLTEntry is immutable, we'll create a new vector
+        end
+        
+        # Create PLT stub code (simplified for now - would generate actual x86-64 code)
+        plt_code = zeros(UInt8, linker.plt.size)
+        
+        plt_region = MemoryRegion(
+            plt_code,
+            plt_base,
+            linker.plt.size,
+            0x5  # R+X permissions (PLT is executable)
+        )
+        push!(linker.memory_regions, plt_region)
+        println("Allocated PLT memory region at 0x$(string(plt_base, base=16)) ($(linker.plt.size) bytes)")
+    end
+    
+    # Update final next_address
+    linker.next_address = alpha_current
+    
     # Update symbol addresses to be absolute
     update_symbol_addresses!(linker, section_address_map)
 end
@@ -849,7 +960,10 @@ function link_objects(filenames::Vector{String}; base_address::UInt64 = UInt64(0
         end
     end
     
-    # Allocate memory regions
+    # Setup dynamic linking infrastructure (GOT/PLT) for external symbols
+    dynamic_symbols = setup_dynamic_linking!(linker)
+    
+    # Allocate memory regions (now includes GOT/PLT if created)
     allocate_memory_regions!(linker)
     
     # Perform relocations
@@ -972,4 +1086,109 @@ function print_memory_layout(linker::DynamicLinker)
         @printf("0x%08x    | 0x%08x | %s\n",
                 region.base_address, region.size, perm_str)
     end
+end
+
+"""
+    create_got!(linker::DynamicLinker, symbols::Vector{String}) -> Nothing
+
+Mathematical model: GOT creation for dynamic symbols
+Creates Global Offset Table for runtime symbol resolution.
+
+GOT structure:
+```math
+GOT = {(s_i, addr_i)}_{i=1}^n \\text{ where } s_i \\in \\text{dynamic_symbols}
+```
+"""
+function create_got!(linker::DynamicLinker, dynamic_symbols::Vector{String})
+    if isempty(dynamic_symbols)
+        return  # No dynamic symbols, no GOT needed
+    end
+    
+    # Calculate GOT size: 8 bytes per entry (64-bit pointers)
+    entry_size = 8
+    got_size = UInt64(length(dynamic_symbols) * entry_size)
+    
+    # Don't allocate GOT address yet - this will be done during memory allocation
+    # Just store the size for now
+    got_entries = Dict{String, UInt64}()
+    for (i, symbol) in enumerate(dynamic_symbols)
+        offset = UInt64((i - 1) * entry_size)  # 0-based offset within GOT
+        got_entries[symbol] = offset  # Store relative offset, not absolute address
+    end
+    
+    # Create GOT structure without absolute base address yet
+    linker.got = GlobalOffsetTable(got_entries, UInt64(0), got_size)
+    
+    println("Prepared GOT with $(length(dynamic_symbols)) entries ($(got_size) bytes)")
+end
+
+"""
+    create_plt!(linker::DynamicLinker, dynamic_symbols::Vector{String}) -> Nothing
+
+Mathematical model: PLT creation for lazy symbol resolution
+Creates Procedure Linkage Table for dynamic symbol resolution.
+
+PLT structure per entry (x86-64):
+```asm
+jmp *GOT[n]     # 6 bytes
+push \$index     # 5 bytes  
+jmp PLT[0]      # 5 bytes (16 bytes total per entry)
+```
+"""
+function create_plt!(linker::DynamicLinker, dynamic_symbols::Vector{String})
+    if isempty(dynamic_symbols) || linker.got === nothing
+        return  # No dynamic symbols or GOT, no PLT needed
+    end
+    
+    # PLT entry size: 16 bytes per entry (x86-64 standard)
+    plt_entry_size = 16
+    
+    # PLT[0] is resolver stub: 16 bytes
+    # PLT[i] are symbol stubs: 16 bytes each
+    total_entries = length(dynamic_symbols) + 1  # +1 for PLT[0]
+    plt_size = UInt64(total_entries * plt_entry_size)
+    
+    # Create PLT entries with relative offsets
+    plt_entries = PLTEntry[]
+    for (i, symbol) in enumerate(dynamic_symbols)
+        got_offset = linker.got.entries[symbol]  # This is relative offset
+        plt_offset = UInt64(i * plt_entry_size)  # Skip PLT[0], relative offset
+        reloc_index = UInt32(i - 1)  # 0-based relocation index
+        
+        push!(plt_entries, PLTEntry(symbol, got_offset, plt_offset, reloc_index))
+    end
+    
+    # Create PLT structure without absolute base address yet
+    linker.plt = ProcedureLinkageTable(plt_entries, UInt64(0), plt_size, linker.got)
+    
+    println("Prepared PLT with $(length(dynamic_symbols)) entries ($(plt_size) bytes)")
+end
+
+"""
+    setup_dynamic_linking!(linker::DynamicLinker) -> Vector{String}
+
+Mathematical model: Dynamic linking infrastructure setup
+Identifies dynamic symbols and creates GOT/PLT infrastructure.
+
+Returns: List of symbols requiring dynamic resolution
+"""
+function setup_dynamic_linking!(linker::DynamicLinker)
+    # Find symbols that need dynamic resolution (external/undefined symbols)
+    dynamic_symbols = String[]
+    
+    for (symbol_name, symbol) in linker.global_symbol_table
+        # Symbols resolved against system libraries need dynamic resolution
+        if symbol.defined && startswith(symbol.source_file, "GLIBC:") || 
+           startswith(symbol.source_file, "MUSL:")
+            push!(dynamic_symbols, symbol_name)
+        end
+    end
+    
+    if !isempty(dynamic_symbols)
+        println("Setting up dynamic linking for $(length(dynamic_symbols)) symbols: $(dynamic_symbols)")
+        create_got!(linker, dynamic_symbols)
+        create_plt!(linker, dynamic_symbols)
+    end
+    
+    return dynamic_symbols
 end
