@@ -285,9 +285,31 @@ function extract_elf_symbols_native(file_path::String)
             for (i, section) in enumerate(section_headers)
                 if section.type == NATIVE_SHT_SYMTAB || section.type == NATIVE_SHT_DYNSYM
                     # Found symbol table, get corresponding string table
+                    strtab_section = nothing
+                    
+                    # First try the link field
                     if section.link > 0 && section.link <= length(section_headers)
-                        strtab_section = section_headers[section.link]
-                        
+                        candidate = section_headers[section.link]
+                        # Check if it's actually a string table and not pointing to itself
+                        if candidate.type == NATIVE_SHT_STRTAB && section.link != i
+                            strtab_section = candidate
+                        end
+                    end
+                    
+                    # If link field doesn't work (common with dynamic symbols), find the largest string table
+                    if strtab_section === nothing && section.type == NATIVE_SHT_DYNSYM
+                        largest_strtab = nothing
+                        largest_size = 0
+                        for candidate in section_headers
+                            if candidate.type == NATIVE_SHT_STRTAB && candidate.size > largest_size
+                                largest_strtab = candidate
+                                largest_size = candidate.size
+                            end
+                        end
+                        strtab_section = largest_strtab
+                    end
+                    
+                    if strtab_section !== nothing
                         # Read symbols
                         symbols_found = parse_symbol_table(file, section, strtab_section, little_endian, is_64bit)
                         union!(symbols, symbols_found)
@@ -344,16 +366,28 @@ function parse_symbol_table(file, symtab_section, strtab_section, little_endian,
             if name_offset > 0 && name_offset < length(string_table)
                 # Find null terminator
                 name_end = findfirst(x -> x == 0, string_table[name_offset+1:end])
-                if name_end !== nothing
-                    symbol_name = String(string_table[name_offset+1:name_offset+name_end-1])
-                    
-                    # Filter symbols (only global/weak defined symbols)
-                    binding = info >> 4
-                    symbol_type = info & 0xf
-                    
-                    if (binding == NATIVE_STB_GLOBAL || binding == NATIVE_STB_WEAK) && 
-                       shndx != 0 && !isempty(symbol_name) && !startswith(symbol_name, "_")
-                        push!(symbols, symbol_name)
+                if name_end !== nothing && name_end > 1
+                    try
+                        # Extract the byte range for the symbol name
+                        symbol_bytes = string_table[name_offset+1:name_offset+name_end-1]
+                        
+                        # Validate that all bytes are valid ASCII/UTF-8 
+                        if all(b -> 0x20 <= b <= 0x7E || b == 0x09, symbol_bytes)  # Printable ASCII + tab
+                            symbol_name = String(copy(symbol_bytes))
+                            
+                            # Filter symbols (only global/weak defined symbols)
+                            binding = info >> 4
+                            symbol_type = info & 0xf
+                            
+                            # Include printf and other libc symbols - remove the underscore filter
+                            if (binding == NATIVE_STB_GLOBAL || binding == NATIVE_STB_WEAK) && 
+                               shndx != 0 && !isempty(symbol_name) && length(symbol_name) > 0
+                                push!(symbols, symbol_name)
+                            end
+                        end
+                    catch e
+                        # Skip symbols that can't be converted to valid strings
+                        continue
                     end
                 end
             end
