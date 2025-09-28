@@ -692,23 +692,62 @@ function perform_relocation!(linker::DynamicLinker, elf_file::ElfFile, relocatio
     
     # Perform relocation based on type
     if rel_type == R_X86_64_64
-        # Direct 64-bit address
+        # Direct 64-bit address: S + A
         value = Int64(symbol_value) + relocation.addend
         apply_relocation_to_region!(text_region, relocation.offset, value, 8)
         println("R_X86_64_64 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")
+        
     elseif rel_type == R_X86_64_PC32
-        # PC-relative 32-bit
-        target_addr = text_region.base_address + relocation.offset + 4  # +4 for next instruction
+        # PC-relative 32-bit: S + A - P
+        target_addr = text_region.base_address + relocation.offset + 4  # P + 4 for next instruction
         value = Int64(symbol_value) + relocation.addend - Int64(target_addr)
         apply_relocation_to_region!(text_region, relocation.offset, value, 4)
         println("R_X86_64_PC32 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")
+        
     elseif rel_type == R_X86_64_PLT32
-        # PLT 32-bit address (for static linking, treat like PC32)
+        # PLT 32-bit address (for static linking, treat like PC32): L + A - P
         # For call instructions, the target address should be the address of the next instruction
-        target_addr = text_region.base_address + relocation.offset + 4  # +4 for next instruction
+        target_addr = text_region.base_address + relocation.offset + 4  # P + 4 for next instruction
         value = Int64(symbol_value) + relocation.addend - Int64(target_addr)
         apply_relocation_to_region!(text_region, relocation.offset, value, 4)
         println("R_X86_64_PLT32 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")
+        
+    elseif rel_type == R_X86_64_32
+        # Direct 32-bit zero extended: S + A (truncated to 32 bits)
+        value = Int64(symbol_value) + relocation.addend
+        if value > typemax(UInt32) || value < 0
+            println("Warning: R_X86_64_32 relocation value 0x$(string(value, base=16)) truncated to 32-bit")
+        end
+        apply_relocation_to_region!(text_region, relocation.offset, Int64(value & 0xffffffff), 4)
+        println("R_X86_64_32 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value & 0xffffffff, base=16))")
+        
+    elseif rel_type == R_X86_64_32S
+        # Direct 32-bit sign extended: S + A (sign-extended to 64 bits)
+        value = Int64(symbol_value) + relocation.addend
+        if value > typemax(Int32) || value < typemin(Int32)
+            println("Warning: R_X86_64_32S relocation value 0x$(string(value, base=16)) does not fit in signed 32-bit")
+        end
+        apply_relocation_to_region!(text_region, relocation.offset, Int64(Int32(value)), 4)
+        println("R_X86_64_32S relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(Int32(value), base=16))")
+        
+    elseif rel_type == R_X86_64_RELATIVE
+        # Adjust by program base: B + A (where B is the base address)
+        value = Int64(text_region.base_address) + relocation.addend
+        apply_relocation_to_region!(text_region, relocation.offset, value, 8)
+        println("R_X86_64_RELATIVE relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")
+        
+    elseif rel_type == R_X86_64_GOTPCREL
+        # PC-relative reference to GOT entry: G + GOT + A - P
+        # For now, without proper GOT implementation, treat as direct symbol reference
+        target_addr = text_region.base_address + relocation.offset + 4  # P + 4 for next instruction
+        value = Int64(symbol_value) + relocation.addend - Int64(target_addr)
+        apply_relocation_to_region!(text_region, relocation.offset, value, 4)
+        println("R_X86_64_GOTPCREL relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16)) (simplified - no GOT)")
+        
+    elseif rel_type == R_X86_64_NONE
+        # No relocation - skip
+        println("R_X86_64_NONE relocation at offset 0x$(string(relocation.offset, base=16)): skipped")
+        
     else
         println("Unsupported relocation type: $rel_type")
     end

@@ -138,14 +138,22 @@ const PF_W = 0x2            # Write
 const PF_R = 0x4            # Read
 
 # Relocation types for x86-64
-const R_X86_64_NONE = 0     # No relocation
-const R_X86_64_64 = 1       # Direct 64 bit
-const R_X86_64_PC32 = 2     # PC relative 32 bit signed
-const R_X86_64_GOT32 = 3    # 32 bit GOT entry
-const R_X86_64_PLT32 = 4    # 32 bit PLT address
-const R_X86_64_COPY = 5     # Copy symbol at runtime
-const R_X86_64_GLOB_DAT = 6 # Create GOT entry
+const R_X86_64_NONE = 0      # No relocation
+const R_X86_64_64 = 1        # Direct 64 bit
+const R_X86_64_PC32 = 2      # PC relative 32 bit signed
+const R_X86_64_GOT32 = 3     # 32 bit GOT entry
+const R_X86_64_PLT32 = 4     # 32 bit PLT address
+const R_X86_64_COPY = 5      # Copy symbol at runtime
+const R_X86_64_GLOB_DAT = 6  # Create GOT entry
 const R_X86_64_JUMP_SLOT = 7 # Create PLT entry
+const R_X86_64_RELATIVE = 8  # Adjust by program base
+const R_X86_64_GOTPCREL = 9  # 32 bit signed PC relative offset to GOT
+const R_X86_64_32 = 10       # Direct 32 bit zero extended
+const R_X86_64_32S = 11      # Direct 32 bit sign extended
+const R_X86_64_16 = 12       # Direct 16 bit zero extended
+const R_X86_64_PC16 = 13     # 16 bit sign extended PC relative
+const R_X86_64_8 = 14        # Direct 8 bit sign extended
+const R_X86_64_PC8 = 15      # 8 bit sign extended PC relative
 
 # Helper functions for symbol info
 st_bind(info::UInt8) = (info >> 4) & 0xf
