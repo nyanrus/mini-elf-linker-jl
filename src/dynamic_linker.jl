@@ -304,64 +304,29 @@ function inject_c_runtime_startup!(linker::DynamicLinker, main_address::UInt64)
     text_regions = filter(r -> (r.permissions & 0x1) != 0, linker.memory_regions)  # Executable regions
     
     if !isempty(text_regions)
-        # Find the first executable region and place _start at the beginning
+        # PRODUCTION FIX: Place _start at a separate location to avoid overlaps
+        # Instead of moving existing code, place _start at the beginning of the text segment
         min_text_addr = minimum(r.base_address for r in text_regions)
-        # Place _start at the start of the text segment
-        startup_address = min_text_addr
+        startup_address = min_text_addr - 0x40  # Place 64 bytes before existing code
         
-        # Move the existing code to make room for _start
-        # Find the region that starts at min_text_addr
-        text_region_index = findfirst(r -> r.base_address == min_text_addr, linker.memory_regions)
-        if text_region_index !== nothing
-            # Move the existing region's code 32 bytes forward to make room for _start
-            old_region = linker.memory_regions[text_region_index]
-            startup_code_size = 23  # Size of our _start function
-            new_base = old_region.base_address + startup_code_size
-            
-            # Update the region
-            linker.memory_regions[text_region_index] = MemoryRegion(
-                old_region.data,
-                new_base,
-                old_region.size,
-                old_region.permissions
-            )
-            
-            # Update symbol addresses that were in this region
-            for (name, symbol) in linker.global_symbol_table
-                if symbol.value >= old_region.base_address && 
-                   symbol.value < (old_region.base_address + old_region.size)
-                    # Update symbol address
-                    new_symbol = Symbol(
-                        symbol.name, symbol.value + startup_code_size, symbol.size,
-                        symbol.binding, symbol.type, symbol.section, symbol.defined, symbol.source_file
-                    )
-                    linker.global_symbol_table[name] = new_symbol
-                    println("Updated symbol '$name' address: 0x$(string(symbol.value, base=16)) -> 0x$(string(new_symbol.value, base=16))")
-                end
-            end
-            
-            # Update main_address if it was affected
-            if main_address >= old_region.base_address && 
-               main_address < (old_region.base_address + old_region.size)
-                main_address += startup_code_size
-            end
-        end
+        println("🔧 PRODUCTION FIX: Placing _start at 0x$(string(startup_address, base=16)), main stays at 0x$(string(main_address, base=16))")
+        
+        # Don't move existing regions - keep them as they are
     else
         # Fallback: place at standard text start
         startup_address = 0x400000 + 0x1000
     end
     
-    # Get the updated main address from the symbol table if it exists
-    if haskey(linker.global_symbol_table, "main")
-        main_address = linker.global_symbol_table["main"].value
-    end
+    # Use the original main_address - no need to update from symbol table
+    
+    # PRODUCTION FIX: Simple approach - use the virtual address distance as calculated
+    # The key insight is that the ELF writer should maintain the same relative distances
+    # between regions as they have in virtual memory, just with different base offsets
     
     # Calculate relative call offset (main_address - (startup_address + call_instruction_offset))
     call_instruction_offset = 7  # Position of call instruction within _start
     call_target = startup_address + call_instruction_offset + 5  # Address after the call instruction
     
-    # PRODUCTION FIX: Ensure correct call offset calculation
-    # Since main was moved by startup_code_size, we need the actual distance in memory
     println("🔍 Call calculation: _start at 0x$(string(startup_address, base=16)), main at 0x$(string(main_address, base=16))")
     println("   Call target: 0x$(string(call_target, base=16))")
     
