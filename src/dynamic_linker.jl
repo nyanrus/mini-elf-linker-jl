@@ -858,7 +858,9 @@ function link_objects(filenames::Vector{String}; base_address::UInt64 = UInt64(0
     dynamic_symbols = setup_dynamic_linking!(linker)
     
     # Setup dynamic section with required library information
-    if !isempty(dynamic_symbols) || !isempty(library_names)
+    # Always create dynamic section when linking with system libraries or when library names specified
+    if !isempty(dynamic_symbols) || !isempty(library_names) || enable_system_libraries
+        println("Setting up dynamic section with $(length(dynamic_symbols)) dynamic symbols and $(length(library_names)) library names")
         setup_dynamic_section!(linker, library_names)
     end
     

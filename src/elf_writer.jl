@@ -165,7 +165,7 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
     end
     
     # Add PT_INTERP program header for dynamic linking (if dynamic symbols present)
-    if !isempty(linker.dynamic_section.entries) && linker.dynamic_section.entries[end].tag != DT_NULL
+    if !isempty(linker.dynamic_section.entries)
         # Standard Linux x86-64 dynamic linker path
         interp_path = "/lib64/ld-linux-x86-64.so.2"
         interp_size = UInt64(length(interp_path) + 1)  # +1 for null terminator
@@ -282,7 +282,11 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
             ELFOSABI_GNU,               # osabi (GNU/Linux)
             0,                          # abiversion
             (0, 0, 0, 0, 0, 0, 0),     # pad
-            ET_EXEC,                    # type - EXEC (Static Executable)
+            if !isempty(linker.dynamic_section.entries)
+                ET_DYN                      # type - DYN (Position-Independent Executable) when dynamic section exists
+            else
+                ET_EXEC                     # type - EXEC (Static Executable) for purely static executables
+            end,
             EM_X86_64,                  # machine
             UInt32(EV_CURRENT),         # version2
             entry_point,                # entry
@@ -303,6 +307,14 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
         # Write program headers
         for ph in program_headers
             write_program_header(io, ph)
+        end
+        
+        # Write interpreter string if PT_INTERP exists
+        interp_ph = findfirst(ph -> ph.type == PT_INTERP, program_headers)
+        if interp_ph !== nothing
+            ph = program_headers[interp_ph]
+            seek(io, ph.offset)
+            write(io, "/lib64/ld-linux-x86-64.so.2\0")  # Standard Linux x86-64 dynamic linker
         end
         
         # Pad to data offset
