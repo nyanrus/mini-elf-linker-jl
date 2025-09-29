@@ -178,6 +178,10 @@ const R_X86_64_TLSDESC_CALL = 35    # TLS descriptor call
 const R_X86_64_TLSDESC = 36  # TLS descriptor: S
 const R_X86_64_IRELATIVE = 37 # Indirect relative: B + A
 
+# GNU Extensions for x86-64 relocations (beyond standard ELF)
+const R_X86_64_GOTPCRELX = 41    # Load from 32 bit signed PC relative offset to GOT entry without REX prefix, relaxable: G + GOT + A - P
+const R_X86_64_REX_GOTPCRELX = 42 # Load from 32 bit signed PC relative offset to GOT entry with REX prefix, relaxable: G + GOT + A - P
+
 # Dynamic Section Entry Types (DT_* constants)
 # Mathematical model: DynamicEntry = (tag, value) where tag ∈ DT_*
 const DT_NULL = 0          # End of dynamic array

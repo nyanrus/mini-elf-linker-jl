@@ -38,6 +38,8 @@ struct RelocationDispatcher
         handlers[R_X86_64_32] = Direct32Handler()
         handlers[R_X86_64_32S] = Direct32SHandler()
         handlers[R_X86_64_PC64] = PC64Handler()
+        handlers[R_X86_64_GOTPCRELX] = GOTPCRelHandler()  # Same as GOTPCREL
+        handlers[R_X86_64_REX_GOTPCRELX] = GOTPCRelHandler()  # Same as GOTPCREL
         
         return new(handlers)
     end
