@@ -300,17 +300,21 @@ _start:
 ```
 """
 function inject_c_runtime_startup!(linker::DynamicLinker, main_address::UInt64)
-    # Place startup code at a safe location that doesn't conflict with ELF headers
-    # Headers typically end around 0x400000 + 0x200 (512 bytes), so place _start after that
-    base_address = 0x400200  # Start after headers (512 bytes should be enough)
+    # Place startup code in a proper location within text segment
+    # For PIE executables, entry points are typically around 0x4000-0x5000
+    base_address = 0x400000  # Standard base address
+    text_start = base_address + 0x1000  # Standard text segment start (4KB after base)
     
-    # Find a safe location for _start that doesn't conflict with existing regions
-    startup_address = base_address
+    # Find a safe location for _start within the text region
+    startup_address = text_start
     if !isempty(linker.memory_regions)
-        # Find the maximum address and place _start after existing regions if needed
-        max_existing = maximum(r.base_address + r.size for r in linker.memory_regions)
-        if max_existing > base_address
-            startup_address = max_existing + 0x10  # Small gap after existing regions
+        # Look for text regions and find a suitable gap
+        text_regions = filter(r -> (r.permissions & 0x1) != 0, linker.memory_regions)  # Executable regions
+        if !isempty(text_regions)
+            # Find the first executable region and place _start just before it
+            min_text_addr = minimum(r.base_address for r in text_regions)
+            # Place _start just before the first executable region, with some padding
+            startup_address = max(text_start, min_text_addr - 0x100)  # 256 bytes before first text
         end
     end
     
@@ -357,8 +361,8 @@ function inject_c_runtime_startup!(linker::DynamicLinker, main_address::UInt64)
         0x5                     # permissions: read + execute
     )
     
-    # Add to linker's memory regions
-    push!(linker.memory_regions, startup_region)
+    # Add to linker's memory regions at the beginning (so it gets proper placement)
+    pushfirst!(linker.memory_regions, startup_region)
     
     # Add _start symbol to global symbol table
     startup_symbol = Symbol(

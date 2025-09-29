@@ -102,21 +102,31 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
     
     # Calculate base address - should be page-aligned
     base_addr = 0x400000  # Standard base address
-    headers_size = elf_header_size + ph_table_size + 0x1000  # Add padding
     
-    # Create separate LOAD segments for headers and code
-    base_addr = 0x400000  # Standard base address
-    headers_size = elf_header_size + ph_table_size + 0x1000  # Add padding
+    # Add PT_PHDR program header FIRST (required for PIE executables)
+    # This describes the program header table itself and MUST come before LOAD segments
+    push!(program_headers, ProgramHeader(
+        PT_PHDR,                    # type
+        PF_R,                      # flags (Read only)
+        UInt64(elf_header_size),   # offset (right after ELF header)
+        base_addr + UInt64(elf_header_size), # vaddr
+        base_addr + UInt64(elf_header_size), # paddr
+        UInt64(ph_table_size),     # filesz (size of program header table)
+        UInt64(ph_table_size),     # memsz
+        0x8                        # align (8-byte alignment)
+    ))
     
-    # First LOAD segment: ELF headers only (Read-only, NO execute!)
+    # First LOAD segment: ELF headers + Program headers (Read-only, NO execute!)
+    # This LOAD segment must cover both ELF header and program header table
+    headers_end = elf_header_size + ph_table_size
     push!(program_headers, ProgramHeader(
         PT_LOAD,                    # type
         PF_R,                      # flags (Read only - headers should not be executable!)
         0,                         # offset (starts at file beginning)
         base_addr,                 # vaddr (0x400000)
         base_addr,                 # paddr
-        UInt64(0x200),            # filesz (headers size - 512 bytes)
-        UInt64(0x200),            # memsz
+        UInt64(max(0x1000, headers_end)), # filesz (at least 4KB to cover headers)
+        UInt64(max(0x1000, headers_end)), # memsz
         0x1000                     # align (4KB)
     ))
     
@@ -271,13 +281,15 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
         
         # Update program header file offsets
         current_offset = data_offset
+        first_load = true
         for (i, ph) in enumerate(program_headers)
             if ph.type == PT_LOAD
-                if i == 1  # First LOAD segment starts at offset 0 (includes ELF headers)
+                if first_load && ph.vaddr == 0x400000  # First LOAD segment starts at offset 0 (includes ELF headers)
                     program_headers[i] = ProgramHeader(
                         ph.type, ph.flags, 0, ph.vaddr, ph.paddr,
                         ph.filesz, ph.memsz, ph.align
                     )
+                    first_load = false
                 else  # Subsequent LOAD segments start after data
                     program_headers[i] = ProgramHeader(
                         ph.type, ph.flags, current_offset, ph.vaddr, ph.paddr,
@@ -286,7 +298,7 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
                     current_offset += ph.filesz
                 end
             end
-            # Non-LOAD segments (like GNU_STACK) keep their original offsets
+            # Non-LOAD segments (like GNU_STACK, PHDR) keep their original offsets
         end
         
         # Create ELF header for executable
