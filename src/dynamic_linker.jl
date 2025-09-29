@@ -559,52 +559,51 @@ function allocate_memory_regions!(linker::DynamicLinker)
     linker.next_address = alpha_current
     
     # Allocate GOT memory region if present
-    if linker.got !== nothing
+    if !isempty(linker.got.entries)
         # Assign actual base address to GOT
         got_base = align_address(alpha_current, UInt64(8))  # 8-byte align
         linker.got.base_address = got_base
-        alpha_current = got_base + linker.got.size
+        got_size = UInt64(length(linker.got.entries) * 8)  # 8 bytes per entry
+        alpha_current = got_base + got_size
         
-        # Update GOT entries to use absolute addresses
-        for (symbol, relative_offset) in linker.got.entries
-            linker.got.entries[symbol] = got_base + relative_offset
-        end
-        
+        # GOT entries will be resolved at runtime by dynamic linker
         got_region = MemoryRegion(
-            zeros(UInt8, linker.got.size),     # Zero-initialized GOT entries
+            zeros(UInt8, got_size),     # Zero-initialized GOT entries
             got_base,
-            linker.got.size,
+            got_size,
             0x6  # R+W permissions (GOT is writable for runtime resolution)
         )
         push!(linker.memory_regions, got_region)
-        println("Allocated GOT memory region at 0x$(string(got_base, base=16)) ($(linker.got.size) bytes)")
+        println("Allocated GOT memory region at 0x$(string(got_base, base=16)) ($(got_size) bytes)")
     end
     
     # Allocate PLT memory region if present
-    if linker.plt !== nothing
+    if !isempty(linker.plt.entries)
         # Assign actual base address to PLT
         plt_base = align_address(alpha_current, UInt64(16))  # 16-byte align
         linker.plt.base_address = plt_base
-        alpha_current = plt_base + linker.plt.size
+        plt_size = UInt64(length(linker.plt.entries) * linker.plt.entry_size)
+        alpha_current = plt_base + plt_size
         
-        # Update PLT entries to use absolute addresses
-        for entry in linker.plt.entries
-            entry_plt_offset = plt_base + entry.plt_offset
-            # Note: entry.plt_offset was relative, now make it absolute
-            # Actually, PLTEntry is immutable, we'll create a new vector
+        # Create PLT code by concatenating all entries
+        plt_code = UInt8[]
+        for entry_code in linker.plt.entries
+            append!(plt_code, entry_code)
         end
         
-        # Create PLT stub code (simplified for now - would generate actual x86-64 code)
-        plt_code = zeros(UInt8, linker.plt.size)
+        # Ensure we have the correct size
+        while length(plt_code) < plt_size
+            push!(plt_code, 0x90)  # NOP padding
+        end
         
         plt_region = MemoryRegion(
             plt_code,
             plt_base,
-            linker.plt.size,
+            plt_size,
             0x5  # R+X permissions (PLT is executable)
         )
         push!(linker.memory_regions, plt_region)
-        println("Allocated PLT memory region at 0x$(string(plt_base, base=16)) ($(linker.plt.size) bytes)")
+        println("Allocated PLT memory region at 0x$(string(plt_base, base=16)) ($(plt_size) bytes)")
     end
     
     # Update final next_address
@@ -688,22 +687,38 @@ end
 """
     perform_relocations!(linker::DynamicLinker)
 
-Perform relocations for all loaded objects.
+Mathematical model: ∀r ∈ Relocations: apply_relocation(r, linker_state)
+Perform relocations for all loaded objects using enhanced relocation engine.
 """
 function perform_relocations!(linker::DynamicLinker)
+    # Use enhanced relocation dispatcher for production-ready processing
     for elf_file in linker.loaded_objects
         for relocation in elf_file.relocations
-            perform_relocation!(linker, elf_file, relocation)
+            try
+                # Try enhanced relocation engine first
+                if apply_relocation!(linker.relocation_dispatcher, relocation, linker)
+                    continue  # Success with enhanced engine
+                end
+            catch e
+                if isa(e, UnsupportedRelocationError)
+                    @warn "Enhanced relocation engine doesn't support relocation, falling back to legacy"
+                else
+                    rethrow(e)
+                end
+            end
+            
+            # Fallback to legacy relocation handling
+            perform_relocation_legacy!(linker, elf_file, relocation)
         end
     end
 end
 
 """
-    perform_relocation!(linker::DynamicLinker, elf_file::ElfFile, relocation::RelocationEntry)
+    perform_relocation_legacy!(linker::DynamicLinker, elf_file::ElfFile, relocation::RelocationEntry)
 
-Perform a single relocation.
+Legacy relocation handling - maintained for compatibility during transition.
 """
-function perform_relocation!(linker::DynamicLinker, elf_file::ElfFile, relocation::RelocationEntry)
+function perform_relocation_legacy!(linker::DynamicLinker, elf_file::ElfFile, relocation::RelocationEntry)
     sym_index = elf64_r_sym(relocation.info)
     rel_type = elf64_r_type(relocation.info)
     
@@ -1059,22 +1074,14 @@ function create_got!(linker::DynamicLinker, dynamic_symbols::Vector{String})
         return  # No dynamic symbols, no GOT needed
     end
     
-    # Calculate GOT size: 8 bytes per entry (64-bit pointers)
-    entry_size = 8
-    got_size = UInt64(length(dynamic_symbols) * entry_size)
-    
-    # Don't allocate GOT address yet - this will be done during memory allocation
-    # Just store the size for now
-    got_entries = Dict{String, UInt64}()
+    # Add symbols to the existing enhanced GOT structure
     for (i, symbol) in enumerate(dynamic_symbols)
-        offset = UInt64((i - 1) * entry_size)  # 0-based offset within GOT
-        got_entries[symbol] = offset  # Store relative offset, not absolute address
+        # Add entry to GOT (entries are indices, base address set later)
+        push!(linker.got.entries, 0x0)  # Will be resolved at runtime
+        linker.got.symbol_indices[symbol] = length(linker.got.entries)
     end
     
-    # Create GOT structure without absolute base address yet
-    linker.got = GlobalOffsetTable(got_entries, UInt64(0), got_size)
-    
-    println("Prepared GOT with $(length(dynamic_symbols)) entries ($(got_size) bytes)")
+    println("Prepared GOT with $(length(dynamic_symbols)) entries ($(length(linker.got.entries) * 8) bytes)")
 end
 
 """
@@ -1091,32 +1098,29 @@ jmp PLT[0]      # 5 bytes (16 bytes total per entry)
 ```
 """
 function create_plt!(linker::DynamicLinker, dynamic_symbols::Vector{String})
-    if isempty(dynamic_symbols) || linker.got === nothing
-        return  # No dynamic symbols or GOT, no PLT needed
+    if isempty(dynamic_symbols)
+        return  # No dynamic symbols, no PLT needed
     end
     
-    # PLT entry size: 16 bytes per entry (x86-64 standard)
-    plt_entry_size = 16
-    
-    # PLT[0] is resolver stub: 16 bytes
-    # PLT[i] are symbol stubs: 16 bytes each
-    total_entries = length(dynamic_symbols) + 1  # +1 for PLT[0]
-    plt_size = UInt64(total_entries * plt_entry_size)
-    
-    # Create PLT entries with relative offsets
-    plt_entries = PLTEntry[]
+    # Add symbols to the existing enhanced PLT structure
     for (i, symbol) in enumerate(dynamic_symbols)
-        got_offset = linker.got.entries[symbol]  # This is relative offset
-        plt_offset = UInt64(i * plt_entry_size)  # Skip PLT[0], relative offset
+        # Create PLT entry for this symbol
+        got_index = get(linker.got.symbol_indices, symbol, 0)
+        if got_index == 0
+            @warn "Symbol $symbol not found in GOT, skipping PLT entry"
+            continue
+        end
+        
+        got_offset = UInt32(got_index * 8)  # Each GOT entry is 8 bytes  
         reloc_index = UInt32(i - 1)  # 0-based relocation index
         
-        push!(plt_entries, PLTEntry(symbol, got_offset, plt_offset, reloc_index))
+        # Create PLT entry with proper x86-64 code
+        plt_entry = create_plt_entry(got_offset, reloc_index)
+        push!(linker.plt.entries, plt_entry.code)
+        linker.plt.symbol_indices[symbol] = length(linker.plt.entries)
     end
     
-    # Create PLT structure without absolute base address yet
-    linker.plt = ProcedureLinkageTable(plt_entries, UInt64(0), plt_size, linker.got)
-    
-    println("Prepared PLT with $(length(dynamic_symbols)) entries ($(plt_size) bytes)")
+    println("Prepared PLT with $(length(dynamic_symbols)) entries ($(length(linker.plt.entries) * 16) bytes)")
 end
 
 """

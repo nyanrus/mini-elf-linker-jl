@@ -285,21 +285,80 @@ struct TLSInitialExec32Handler <: RelocationHandler end
 struct TLSLocalExec32Handler <: RelocationHandler end
 struct IRelativeHandler <: RelocationHandler end
 
-# Default process_relocation for placeholder handlers
-for handler_type in [CopyRelocationHandler, Direct32Handler, Direct32SHandler, 
-                     Direct16Handler, PC16Handler, Direct8Handler, PC8Handler,
-                     PC64Handler, GOTOffset64Handler, GOTPC32Handler, GOT64Handler,
-                     GOTPCRel64Handler, GOTPC64Handler, GOTPLT64Handler, PLTOffset64Handler,
-                     Size32Handler, Size64Handler, TLSModuleHandler, TLSOffsetHandler,
-                     TLSInitialExecHandler, TLSGeneralDynamicHandler, TLSLocalDynamicHandler,
-                     TLSOffset32Handler, TLSInitialExec32Handler, TLSLocalExec32Handler,
-                     IRelativeHandler]
-    @eval function process_relocation(handler::$handler_type,
-                                    relocation::RelocationEntry,
-                                    linker)
-        @warn "Relocation handler $(typeof(handler)) not yet implemented"
-        return false
+# Enhanced implementations for critical relocation types
+
+"""
+    Direct32Handler - R_X86_64_32
+
+Mathematical model: f(S, A) = S + A (truncated to 32-bit)
+Direct 32-bit zero extended relocation.
+"""
+function process_relocation(handler::Direct32Handler,
+                          relocation::RelocationEntry,
+                          linker)
+    symbol_value = get_symbol_value(linker, relocation)
+    value = Int64(symbol_value) + relocation.addend  # S + A
+    
+    # Validate 32-bit range
+    if value > typemax(UInt32) || value < 0
+        @warn "R_X86_64_32 relocation value $value out of 32-bit range"
     end
+    
+    apply_relocation_to_memory!(linker, relocation.offset, value & 0xffffffff, 4)
+    return true
+end
+
+"""
+    Direct32SHandler - R_X86_64_32S
+
+Mathematical model: f(S, A) = S + A (sign extended to 64-bit)
+Direct 32-bit sign extended relocation.
+"""
+function process_relocation(handler::Direct32SHandler,
+                          relocation::RelocationEntry,
+                          linker)
+    symbol_value = get_symbol_value(linker, relocation)
+    value = Int64(symbol_value) + relocation.addend  # S + A
+    
+    # Validate signed 32-bit range
+    if value > typemax(Int32) || value < typemin(Int32)
+        @warn "R_X86_64_32S relocation value $value out of signed 32-bit range"
+    end
+    
+    apply_relocation_to_memory!(linker, relocation.offset, Int64(Int32(value)), 4)
+    return true
+end
+
+"""
+    PC64Handler - R_X86_64_PC64
+
+Mathematical model: f(S, A, P) = S + A - P
+PC-relative 64-bit relocation.
+"""
+function process_relocation(handler::PC64Handler,
+                          relocation::RelocationEntry,
+                          linker)
+    symbol_value = get_symbol_value(linker, relocation)
+    place_address = get_relocation_place(linker, relocation)
+    value = Int64(symbol_value) + relocation.addend - Int64(place_address)  # S + A - P
+    
+    apply_relocation_to_memory!(linker, relocation.offset, value, 8)
+    return true
+end
+
+"""
+    CopyRelocationHandler - R_X86_64_COPY
+
+Mathematical model: f() = copy_symbol_data
+Copy relocation for shared library variables.
+"""
+function process_relocation(handler::CopyRelocationHandler,
+                          relocation::RelocationEntry,
+                          linker)
+    # Copy relocations require special handling at runtime
+    # For now, log and return true
+    @warn "R_X86_64_COPY relocation encountered - requires runtime dynamic linker support"
+    return true
 end
 
 # Helper functions for relocation processing
@@ -316,8 +375,8 @@ function get_symbol_value(linker, relocation::RelocationEntry)
         return 0x0
     end
     
-    # Find symbol in global symbol table
-    for symbol in values(linker.global_symbols)
+    # Find symbol in global symbol table  
+    for symbol in values(linker.global_symbol_table)
         # Implementation depends on how symbols are indexed
         return symbol.value
     end
@@ -407,4 +466,20 @@ Exception for unsupported relocation types.
 """
 struct UnsupportedRelocationError <: Exception
     message::String
+end
+
+# Default process_relocation for remaining placeholder handlers
+for handler_type in [Direct16Handler, PC16Handler, Direct8Handler, PC8Handler,
+                     GOTOffset64Handler, GOTPC32Handler, GOT64Handler,
+                     GOTPCRel64Handler, GOTPC64Handler, GOTPLT64Handler, PLTOffset64Handler,
+                     Size32Handler, Size64Handler, TLSModuleHandler, TLSOffsetHandler,
+                     TLSInitialExecHandler, TLSGeneralDynamicHandler, TLSLocalDynamicHandler,
+                     TLSOffset32Handler, TLSInitialExec32Handler, TLSLocalExec32Handler,
+                     IRelativeHandler]
+    @eval function process_relocation(handler::$handler_type,
+                                    relocation::RelocationEntry,
+                                    linker)
+        @warn "Relocation handler $(typeof(handler)) not yet implemented - falling back to legacy"
+        return false
+    end
 end
