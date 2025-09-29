@@ -137,23 +137,46 @@ const PF_X = 0x1            # Execute
 const PF_W = 0x2            # Write
 const PF_R = 0x4            # Read
 
-# Relocation types for x86-64
+# Complete x86-64 Relocation Types (ELF Specification Compliant)
+# Mathematical model: ℛ = {R_X86_64_i}_{i=0}^{37} where each defines address computation
 const R_X86_64_NONE = 0      # No relocation
-const R_X86_64_64 = 1        # Direct 64 bit
-const R_X86_64_PC32 = 2      # PC relative 32 bit signed
-const R_X86_64_GOT32 = 3     # 32 bit GOT entry
-const R_X86_64_PLT32 = 4     # 32 bit PLT address
-const R_X86_64_COPY = 5      # Copy symbol at runtime
-const R_X86_64_GLOB_DAT = 6  # Create GOT entry
-const R_X86_64_JUMP_SLOT = 7 # Create PLT entry
-const R_X86_64_RELATIVE = 8  # Adjust by program base
-const R_X86_64_GOTPCREL = 9  # 32 bit signed PC relative offset to GOT
-const R_X86_64_32 = 10       # Direct 32 bit zero extended
-const R_X86_64_32S = 11      # Direct 32 bit sign extended
-const R_X86_64_16 = 12       # Direct 16 bit zero extended
-const R_X86_64_PC16 = 13     # 16 bit sign extended PC relative
-const R_X86_64_8 = 14        # Direct 8 bit sign extended
-const R_X86_64_PC8 = 15      # 8 bit sign extended PC relative
+const R_X86_64_64 = 1        # Direct 64 bit: S + A  
+const R_X86_64_PC32 = 2      # PC relative 32 bit signed: S + A - P
+const R_X86_64_GOT32 = 3     # 32 bit GOT entry: G + A
+const R_X86_64_PLT32 = 4     # 32 bit PLT address: L + A - P  
+const R_X86_64_COPY = 5      # Copy symbol at runtime: none
+const R_X86_64_GLOB_DAT = 6  # Create GOT entry: S
+const R_X86_64_JUMP_SLOT = 7 # Create PLT entry: S
+const R_X86_64_RELATIVE = 8  # Adjust by program base: B + A
+const R_X86_64_GOTPCREL = 9  # 32 bit signed PC relative offset to GOT: G + GOT + A - P
+const R_X86_64_32 = 10       # Direct 32 bit zero extended: S + A  
+const R_X86_64_32S = 11      # Direct 32 bit sign extended: S + A
+const R_X86_64_16 = 12       # Direct 16 bit zero extended: S + A
+const R_X86_64_PC16 = 13     # 16 bit sign extended PC relative: S + A - P
+const R_X86_64_8 = 14        # Direct 8 bit sign extended: S + A
+const R_X86_64_PC8 = 15      # 8 bit sign extended PC relative: S + A - P
+const R_X86_64_DTPMOD64 = 16 # ID of module containing symbol
+const R_X86_64_DTPOFF64 = 17 # Offset in module's TLS block  
+const R_X86_64_TPOFF64 = 18  # Offset in initial TLS block
+const R_X86_64_TLSGD = 19    # 32 bit signed PC relative offset to GD GOT entry
+const R_X86_64_TLSLD = 20    # 32 bit signed PC relative offset to LD GOT entry
+const R_X86_64_DTPOFF32 = 21 # Offset in TLS block: S + A
+const R_X86_64_GOTTPOFF = 22 # 32 bit signed PC relative offset to IE GOT entry  
+const R_X86_64_TPOFF32 = 23  # Offset in initial TLS block: S + A
+const R_X86_64_PC64 = 24     # PC relative 64 bit: S + A - P
+const R_X86_64_GOTOFF64 = 25 # 64 bit offset to GOT: S + A - GOT
+const R_X86_64_GOTPC32 = 26  # 32 bit signed PC relative offset to GOT: GOT + A - P
+const R_X86_64_GOT64 = 27    # 64-bit GOT entry offset: G + A
+const R_X86_64_GOTPCREL64 = 28 # 64-bit PC relative offset to GOT entry: G + GOT + A - P
+const R_X86_64_GOTPC64 = 29  # 64-bit PC relative offset to GOT: GOT + A - P
+const R_X86_64_GOTPLT64 = 30 # 64-bit GOT relative offset to PLT entry: G + A
+const R_X86_64_PLTOFF64 = 31 # 64-bit PLT relative offset: L + A - PLT
+const R_X86_64_SIZE32 = 32   # Size of symbol plus 32-bit addend: Z + A
+const R_X86_64_SIZE64 = 33   # Size of symbol plus 64-bit addend: Z + A  
+const R_X86_64_GOTPC32_TLSDESC = 34 # GOT offset for TLS descriptor: G + A
+const R_X86_64_TLSDESC_CALL = 35    # TLS descriptor call
+const R_X86_64_TLSDESC = 36  # TLS descriptor: S
+const R_X86_64_IRELATIVE = 37 # Indirect relative: B + A
 
 # Helper functions for symbol info
 st_bind(info::UInt8) = (info >> 4) & 0xf
@@ -164,3 +187,99 @@ st_info(bind::UInt8, type::UInt8) = (bind << 4) | (type & 0xf)
 elf64_r_sym(info::UInt64) = info >> 32
 elf64_r_type(info::UInt64) = info & 0xffffffff
 elf64_r_info(sym::UInt32, type::UInt32) = (UInt64(sym) << 32) | UInt64(type)
+
+# Enhanced Dynamic Linking Structures
+# Mathematical model: GOT = {GOT[i]}_{i=0}^{n-1} where GOT[i] ∈ ℕ₆₄
+
+"""
+    GlobalOffsetTable (GOT)
+
+Mathematical model: 𝒢 = {g_i}_{i=0}^{n-1} where g_i ∈ ℕ₆₄
+Manages runtime symbol address resolution for dynamic linking.
+"""
+mutable struct GlobalOffsetTable
+    entries::Vector{UInt64}        # GOT entries: symbol addresses or PLT resolver
+    symbol_indices::Dict{String, Int} # Symbol name → GOT index mapping
+    base_address::UInt64           # GOT virtual memory address
+    
+    function GlobalOffsetTable(base_address::UInt64 = 0x0)
+        # GOT[0] is reserved for dynamic linker information
+        new([0x0], Dict{String, Int}(), base_address)
+    end
+end
+
+"""
+    ProcedureLinkageTable (PLT)
+
+Mathematical model: 𝒫 = {p_i}_{i=0}^{n-1} where p_i = {jmp_code, push_code, resolver_code}
+Enables lazy binding for dynamic function calls.
+"""
+mutable struct ProcedureLinkageTable  
+    entries::Vector{Vector{UInt8}}     # PLT entry machine code (16 bytes each)
+    symbol_indices::Dict{String, Int}  # Symbol name → PLT index mapping  
+    base_address::UInt64              # PLT virtual memory address
+    entry_size::UInt32                # Size per PLT entry (typically 16)
+    
+    function ProcedureLinkageTable(base_address::UInt64 = 0x0)
+        # PLT[0] is the resolver entry that calls dynamic linker
+        resolver_entry = create_plt_resolver_entry()
+        new([resolver_entry], Dict{String, Int}(), base_address, 16)
+    end
+end
+
+"""
+    PLTEntry
+
+Mathematical model: PLT[i] = (jmp_instruction, push_instruction, jmp_resolver)
+Represents a single PLT entry with x86-64 machine code.
+"""
+struct PLTEntry
+    code::Vector{UInt8}      # 16 bytes of x86-64 PLT stub code
+    got_offset::UInt32       # Offset into GOT for this symbol
+    reloc_index::UInt32      # Index for relocation processing
+end
+
+"""
+    create_plt_resolver_entry() → Vector{UInt8}
+
+Mathematical model: PLT[0] = resolver_code
+Creates the PLT[0] resolver entry that interfaces with dynamic linker.
+"""
+function create_plt_resolver_entry()
+    # x86-64 PLT resolver stub (16 bytes)
+    # This will be called by other PLT entries to resolve symbols
+    code = UInt8[
+        # push GOT[1] (link_map)
+        0xff, 0x35, 0x00, 0x00, 0x00, 0x00,  # 6 bytes: push offset to GOT[1]
+        # jmp *GOT[2] (dl_runtime_resolve)  
+        0xff, 0x25, 0x00, 0x00, 0x00, 0x00,  # 6 bytes: jmp to GOT[2]
+        # padding
+        0x90, 0x90, 0x90, 0x90               # 4 bytes: nop padding
+    ]
+    return code
+end
+
+"""
+    create_plt_entry(got_offset::UInt32, reloc_index::UInt32) → PLTEntry
+
+Mathematical model: PLT[i] = f(GOT_offset_i, reloc_index_i) 
+Creates a PLT entry for symbol with given GOT offset and relocation index.
+"""
+function create_plt_entry(got_offset::UInt32, reloc_index::UInt32)
+    # Standard x86-64 PLT entry (16 bytes)
+    code = UInt8[]
+    
+    # jmp *got_offset(%rip) - 6 bytes  
+    append!(code, [0xff, 0x25])  # jmp *offset(%rip)
+    append!(code, reinterpret(UInt8, [got_offset]))  # 4-byte offset
+    
+    # push reloc_index - 5 bytes
+    push!(code, 0x68)  # push imm32
+    append!(code, reinterpret(UInt8, [reloc_index]))  # 4-byte index
+    
+    # jmp PLT[0] - 5 bytes  
+    push!(code, 0xe9)  # jmp rel32
+    append!(code, [0x00, 0x00, 0x00, 0x00])  # will be patched with relative offset
+    
+    return PLTEntry(code, got_offset, reloc_index)
+end

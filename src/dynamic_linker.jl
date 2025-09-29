@@ -52,62 +52,9 @@ mutable struct MemoryRegion
 end
 
 """
-    PLTEntry
-
-Mathematical model: PLT entry for procedure linkage table
-Represents a single PLT (Procedure Linkage Table) entry for dynamic symbol resolution.
-
-PLT entry structure (x86-64):
-```asm
-jmp *GOT[n]     # Jump to GOT entry
-push index      # Push relocation index
-jmp PLT[0]      # Jump to resolver
-```
-"""
-struct PLTEntry
-    symbol_name::String    # Symbol this entry resolves
-    got_offset::UInt64     # Offset into GOT table  
-    plt_offset::UInt64     # Offset of this PLT entry
-    reloc_index::UInt32    # Index for dynamic relocations
-end
-
-"""
-    GlobalOffsetTable
-
-Mathematical model: GOT = {(symbol, address)_i}_{i=1}^n
-Global Offset Table for dynamic symbol resolution.
-
-Mathematical properties:
-- Each symbol has exactly one GOT entry: ∀s ∈ Symbols: |GOT[s]| = 1
-- GOT addresses are runtime-resolved: GOT[s] = resolve_runtime(s)
-"""
-mutable struct GlobalOffsetTable
-    entries::Dict{String, UInt64}     # symbol_name → GOT offset
-    base_address::UInt64              # Base address of GOT
-    size::UInt64                      # Total size of GOT
-end
-
-"""
-    ProcedureLinkageTable
-
-Mathematical model: PLT = {PLTEntry_i}_{i=1}^n
-Procedure Linkage Table for lazy symbol resolution.
-
-PLT structure:
-- PLT[0]: resolver stub  
-- PLT[i]: individual symbol stubs
-"""
-mutable struct ProcedureLinkageTable
-    entries::Vector{PLTEntry}         # PLT entries
-    base_address::UInt64              # Base address of PLT
-    size::UInt64                      # Total size of PLT
-    got::GlobalOffsetTable            # Associated GOT
-end
-
-"""
     DynamicLinker
 
-Mathematical model: S_Δ = ⟨O, Σ, M, α_base, α_next, T, GOT, PLT⟩
+Mathematical model: S_Δ = ⟨O, Σ, M, α_base, α_next, T, GOT, PLT, RelocationEngine⟩
 Main dynamic linker state representing the complete linking context.
 
 State space components:
@@ -117,30 +64,37 @@ State space components:
 - base_address ∈ ℕ₆₄: α_base virtual memory base
 - next_address ∈ ℕ₆₄: α_next next available address
 - temp_files ∈ Vector{String}: T temporary file cleanup set
-- got ∈ GlobalOffsetTable: Global Offset Table for dynamic symbols
-- plt ∈ ProcedureLinkageTable: Procedure Linkage Table for lazy resolution
+- got ∈ GlobalOffsetTable: Enhanced GOT for dynamic symbols
+- plt ∈ ProcedureLinkageTable: Enhanced PLT for lazy resolution  
+- relocation_dispatcher ∈ RelocationDispatcher: Complete relocation engine
 """
 mutable struct DynamicLinker
-    loaded_objects::Vector{ElfFile}           # ↔ O = {o_i}
-    global_symbol_table::Dict{String, Symbol} # ↔ Σ: String → Symbol  
-    memory_regions::Vector{MemoryRegion}      # ↔ M = {m_j}
-    base_address::UInt64                      # ↔ α_base ∈ ℕ₆₄
-    next_address::UInt64                      # ↔ α_next ∈ ℕ₆₄
-    temp_files::Vector{String}                # ↔ T cleanup set
-    got::Union{GlobalOffsetTable, Nothing}   # ↔ GOT for dynamic symbols
-    plt::Union{ProcedureLinkageTable, Nothing} # ↔ PLT for lazy resolution
+    loaded_objects::Vector{ElfFile}                    # ↔ O = {o_i}
+    global_symbol_table::Dict{String, Symbol}          # ↔ Σ: String → Symbol  
+    memory_regions::Vector{MemoryRegion}               # ↔ M = {m_j}
+    base_address::UInt64                               # ↔ α_base ∈ ℕ₆₄
+    next_address::UInt64                               # ↔ α_next ∈ ℕ₆₄
+    temp_files::Vector{String}                         # ↔ T cleanup set
+    got::GlobalOffsetTable                             # ↔ Enhanced GOT structure
+    plt::ProcedureLinkageTable                        # ↔ Enhanced PLT structure  
+    relocation_dispatcher::RelocationDispatcher       # ↔ Complete relocation engine
 end
 
 """
     DynamicLinker(base_address::UInt64 = UInt64(0x400000)) -> DynamicLinker
 
 Mathematical model: S_Δ initialization
-Create a new dynamic linker instance with initial state S_Δ = ⟨∅, ∅, ∅, α_base, α_base, ∅, ∅, ∅⟩
+Create a new dynamic linker instance with enhanced structures for production-ready linking.
 
 Base address α_base defaults to 0x400000 (standard Linux executable base).
 """
 function DynamicLinker(alpha_base::UInt64 = UInt64(0x400000))
-    # Initialize linker state: S_Δ = ⟨O, Σ, M, α_base, α_next, T, GOT, PLT⟩
+    # Initialize enhanced GOT and PLT structures
+    got = GlobalOffsetTable(alpha_base + 0x100000)  # GOT at base + 1MB  
+    plt = ProcedureLinkageTable(alpha_base + 0x110000)  # PLT at base + 1MB + 64KB
+    relocation_dispatcher = RelocationDispatcher()
+    
+    # Initialize linker state: S_Δ = ⟨O, Σ, M, α_base, α_next, T, GOT, PLT, RelocationEngine⟩
     return DynamicLinker(
         ElfFile[],                    # ↔ O = ∅ (empty object set)
         Dict{String, Symbol}(),       # ↔ Σ = ∅ (empty symbol table)
@@ -148,8 +102,9 @@ function DynamicLinker(alpha_base::UInt64 = UInt64(0x400000))
         alpha_base,                   # ↔ α_base virtual memory base
         alpha_base,                   # ↔ α_next = α_base initially
         String[],                     # ↔ T = ∅ (empty temp files)
-        nothing,                      # ↔ GOT = ∅ initially
-        nothing                       # ↔ PLT = ∅ initially
+        got,                          # ↔ Enhanced GOT structure
+        plt,                          # ↔ Enhanced PLT structure
+        relocation_dispatcher         # ↔ Complete relocation engine
     )
 end
 
