@@ -1,70 +1,70 @@
-# Memory Allocation Mathematical Specification
+= Memory Allocation Mathematical Specification
 
-## Overview
+== Overview
 
 This specification defines the mathematical models for memory allocation and layout in the MiniElfLinker. Following the Mathematical-Driven AI Development methodology, memory allocation implements algorithmic processes using mathematical notation for spatial algorithms and direct Julia implementation for configuration and data structures.
 
-## Mathematical Model
+== Mathematical Model
 
-### Memory Space Framework
+=== Memory Space Framework
 
-**Virtual Memory Address Space**:
-```math
+_Virtual Memory Address Space_:
+$
 \mathcal{A} = [0, 2^{64} - 1] \subset \mathbb{N}
-```
+$
 
-**Allocated Region Set**:
-```math
+_Allocated Region Set_:
+$
 \mathcal{M}_{regions} = \{r_i : r_i = [base_i, base_i + size_i), i \in [1, n]\}
-```
+$
 
-**Non-Overlap Constraint**:
-```math
+_Non-Overlap Constraint_:
+$
 \forall i, j \in [1, n], i \neq j: r_i \cap r_j = \emptyset
-```
+$
 
-**Memory Region Representation**:
-```math
+_Memory Region Representation_:
+$
 r = \langle base, size, data, permissions, alignment \rangle
-```
+$
 where:
 - $base \in \mathcal{A}$: starting virtual address
 - $size \in \mathbb{N}_{64}$: region size in bytes
 - $data \in \{0, 1\}^{size}$: binary content
-- $permissions \in \{READ, WRITE, EXEC\}^*$: access permissions
+- $permissions \in \{READ, WRITE, EXEC\}^_$: access permissions
 - $alignment \in \{2^k : k \in \mathbb{N}\}$: address alignment constraint
 
-### Allocation Algorithm
+=== Allocation Algorithm
 
-**Primary Allocation Function**:
-```math
+_Primary Allocation Function_:
+$
 \phi_{allocate}: \mathcal{S}_{sections} \times \mathcal{A}_{base} \to \mathcal{M}_{regions} \cup \{\text{Error}\}
-```
+$
 
-**Sequential Allocation Strategy**:
-```math
+_Sequential Allocation Strategy_:
+$
 \begin{align}
 addr_0 &= base\_address \\
 addr_{i+1} &= \text{align}(addr_i + size_i, alignment_{i+1})
 \end{align}
-```
+$
 
-**Alignment Function**:
-```math
+_Alignment Function_:
+$
 \text{align}(addr, a) = \begin{cases}
 addr & \text{if } addr \bmod a = 0 \\
 addr + (a - (addr \bmod a)) & \text{otherwise}
 \end{cases}
-```
+$
 
-**Space Utilization Measure**:
-```math
+_Space Utilization Measure_:
+$
 \eta_{utilization} = \frac{\sum_{i=1}^n size_i}{\max_i(base_i + size_i) - base\_address}
-```
+$
 
-## Implementation Correspondence
+== Implementation Correspondence
 
-### Memory Region Structure (Non-Algorithmic)
+=== Memory Region Structure (Non-Algorithmic)
 
 Following copilot guidelines, memory region data structures use direct Julia implementation:
 
@@ -89,7 +89,7 @@ mutable struct MemoryRegion
     end
 end
 
-# Permission constants (non-algorithmic)
+= Permission constants (non-algorithmic)
 const PERM_READ = 0x4
 const PERM_WRITE = 0x2
 const PERM_EXEC = 0x1
@@ -97,16 +97,16 @@ const PERM_READ_WRITE = PERM_READ | PERM_WRITE
 const PERM_READ_EXEC = PERM_READ | PERM_EXEC
 ```
 
-### Section Allocation Algorithm
+=== Section Allocation Algorithm
 
-**Mathematical Model**: $\phi_{allocate\_section}: \text{Section} \times \mathcal{A}_{current} \to \mathcal{M}_{region}$
+_Mathematical Model_: $\phi_{allocate\_section}: \text{Section} \times \mathcal{A}_{current} \to \mathcal{M}_{region}$
 
-**Section Processing Pipeline**:
-```math
+_Section Processing Pipeline_:
+$
 section \xrightarrow{\text{size\_calculation}} required\_size \xrightarrow{\text{alignment}} aligned\_address \xrightarrow{\text{allocation}} memory\_region
-```
+$
 
-**Implementation**:
+_Implementation_:
 ```julia
 """
 Mathematical model: φ_allocate_section: Section × 𝒜_current → ℳ_region
@@ -144,24 +144,24 @@ function φ_allocate_section!(linker::DynamicLinker, section::SectionHeader,
 end
 ```
 
-### Address Alignment Algorithm
+=== Address Alignment Algorithm
 
-**Mathematical Model**: $\phi_{align}: \mathbb{N}_{64} \times \mathbb{N}_{64} \to \mathbb{N}_{64}$
+_Mathematical Model_: $\phi_{align}: \mathbb{N}_{64} \times \mathbb{N}_{64} \to \mathbb{N}_{64}$
 
-**Alignment Computation**:
-```math
+_Alignment Computation_:
+$
 \phi_{align}(addr, alignment) = \begin{cases}
 addr & \text{if } addr \equiv 0 \pmod{alignment} \\
 addr + (alignment - (addr \bmod alignment)) & \text{otherwise}
 \end{cases}
-```
+$
 
-**Bit-Level Optimization**:
-```math
+_Bit-Level Optimization_:
+$
 \phi_{align\_fast}(addr, 2^k) = (addr + 2^k - 1) \land \neg(2^k - 1)
-```
+$
 
-**Implementation**:
+_Implementation_:
 ```julia
 """
 Mathematical model: φ_align: ℕ₆₄ × ℕ₆₄ → ℕ₆₄
@@ -184,21 +184,21 @@ function φ_align_address(address::UInt64, alignment::UInt64)::UInt64
 end
 ```
 
-### Permission Mapping Algorithm
+=== Permission Mapping Algorithm
 
-**Mathematical Model**: $\phi_{permissions}: \text{SectionFlags} \to \text{MemoryPermissions}$
+_Mathematical Model_: $\phi_{permissions}: \text{SectionFlags} \to \text{MemoryPermissions}$
 
-**Flag Interpretation**:
-```math
+_Flag Interpretation_:
+$
 \phi_{permissions}(flags) = \begin{cases}
 \text{READ\_EXEC} & \text{if } (flags \land \text{SHF\_EXECINSTR}) \neq 0 \\
 \text{READ\_WRITE} & \text{if } (flags \land \text{SHF\_WRITE}) \neq 0 \\
 \text{READ} & \text{if } (flags \land \text{SHF\_ALLOC}) \neq 0 \\
 \text{NONE} & \text{otherwise}
 \end{cases}
-```
+$
 
-**Implementation**:
+_Implementation_:
 ```julia
 """
 Mathematical model: φ_permissions: SectionFlags → MemoryPermissions
@@ -224,21 +224,21 @@ function φ_map_permissions(section_flags::UInt64)::UInt8
 end
 ```
 
-### Overlap Detection Algorithm
+=== Overlap Detection Algorithm
 
-**Mathematical Model**: $\phi_{overlap}: \mathcal{M}_{existing} \times \mathcal{M}_{new} \to \mathbb{B}$
+_Mathematical Model_: $\phi_{overlap}: \mathcal{M}_{existing} \times \mathcal{M}_{new} \to \mathbb{B}$
 
-**Interval Intersection Test**:
-```math
+_Interval Intersection Test_:
+$
 \text{intersects}(r_1, r_2) = \neg(r_1.end \leq r_2.start \lor r_2.end \leq r_1.start)
-```
+$
 
-**Comprehensive Overlap Check**:
-```math
+_Comprehensive Overlap Check_:
+$
 \phi_{overlap}(regions, new\_region) = \exists r \in regions: \text{intersects}(r, new\_region)
-```
+$
 
-**Implementation**:
+_Implementation_:
 ```julia
 """
 Mathematical model: φ_overlap: ℳ_existing × ℳ_new → 𝔹
@@ -265,26 +265,26 @@ function φ_verify_no_overlap(existing_regions::Vector{MemoryRegion},
 end
 ```
 
-## Memory Layout Strategy
+== Memory Layout Strategy
 
-### Base Address Configuration
+=== Base Address Configuration
 
-**Address Space Layout**:
-```math
+_Address Space Layout_:
+$
 \begin{align}
 \alpha_{base} &= 0x400000 \quad \text{(standard executable base)} \\
 \alpha_{text} &= \alpha_{base} + 0x1000 \quad \text{(code section)} \\
 \alpha_{data} &= \text{align}(\alpha_{text} + size_{text}, 0x1000) \quad \text{(data section)} \\
 \alpha_{bss} &= \text{align}(\alpha_{data} + size_{data}, 0x1000) \quad \text{(BSS section)}
 \end{align}
-```
+$
 
-**Layout Function**:
-```math
+_Layout Function_:
+$
 \phi_{layout}: \mathcal{S}_{sections} \to \mathcal{M}_{layout}
-```
+$
 
-**Implementation**:
+_Implementation_:
 ```julia
 """
 Mathematical model: φ_layout: 𝒮_sections → ℳ_layout
@@ -313,84 +313,84 @@ function φ_compute_memory_layout!(linker::DynamicLinker, sections::Vector{Secti
 end
 ```
 
-## Complexity Analysis
+== Complexity Analysis
 
-### Time Complexity
+=== Time Complexity
 
-```math
+$
 \begin{align}
 T_{\text{alignment}}(1) &= O(1) \quad \text{– Constant time alignment computation} \\
 T_{\text{overlap\_check}}(n) &= O(n) \quad \text{– Linear search through existing regions} \\
 T_{\text{allocation}}(n) &= O(n) \quad \text{– Per-section allocation} \\
 T_{\text{total}}(m) &= O(m \cdot n) \quad \text{– } m \text{ sections, } n \text{ avg. regions}
 \end{align}
-```
+$
 
-### Space Complexity
+=== Space Complexity
 
-```math
+$
 \begin{align}
 S_{\text{regions}}(m) &= O(m) \quad \text{– One region per allocatable section} \\
 S_{\text{data}}(d) &= O(d) \quad \text{– Total data size} \\
 S_{\text{overhead}}(m) &= O(m) \quad \text{– Region metadata}
 \end{align}
-```
+$
 
-### Optimization Opportunities
+=== Optimization Opportunities
 
-**Current Sequential Allocation**:
-```math
+_Current Sequential Allocation_:
+$
 T_{\text{current}} = O(n^2) \text{ for overlap checking}
-```
+$
 
-**Optimized Spatial Data Structure**:
-```math
+_Optimized Spatial Data Structure_:
+$
 T_{\text{interval\_tree}} = O(n \log n) \text{ for insertion and overlap detection}
-```
+$
 
-**Memory Pre-allocation Strategy**:
-```math
+_Memory Pre-allocation Strategy_:
+$
 \text{total\_size} = \sum_{s \in sections} \text{align}(s.size, s.addralign)
-```
+$
 
-## Integration Points
+== Integration Points
 
-### Symbol Resolution Interface
+=== Symbol Resolution Interface
 
-```math
+$
 \phi_{\text{resolve\_address}}: \text{SymbolName} \times \mathcal{M}_{regions} \to \mathcal{A} \cup \{\perp\}
-```
+$
 
-### Relocation Processing Interface
+=== Relocation Processing Interface
 
-```math
+$
 \phi_{\text{find\_region}}: \mathcal{A} \times \mathcal{M}_{regions} \to \mathcal{M}_{region} \cup \{\perp\}
-```
+$
 
-### ELF Writer Interface
+=== ELF Writer Interface
 
-```math
+$
 \phi_{\text{serialize\_layout}}: \mathcal{M}_{regions} \to \text{ProgramHeaders} \times \text{FileLayout}
-```
+$
 
-## Error Handling and Validation
+== Error Handling and Validation
 
-### Memory Validation Function
+=== Memory Validation Function
 
-```math
+$
 \phi_{\text{validate}}: \mathcal{M}_{regions} \to \mathbb{B}
-```
+$
 
-**Validation Criteria**:
-```math
+_Validation Criteria_:
+$
 \begin{align}
 \text{valid\_alignment} &= \forall r \in regions: r.base \bmod r.alignment = 0 \\
 \text{no\_overlaps} &= \forall i, j: i \neq j \implies r_i \cap r_j = \emptyset \\
 \text{within\_bounds} &= \forall r: r.base + r.size \leq 2^{64}
 \end{align}
-```
+$
 
-**Implementation**:
+_Implementation_:
 ```julia
 """
 Mathematical model: φ_validate: ℳ_regions → 𝔹
@@ -426,30 +426,30 @@ function φ_validate_memory_layout(regions::Vector{MemoryRegion})::Bool
 end
 ```
 
-## Advanced Memory Management
+== Advanced Memory Management
 
-### Virtual Memory Mapping
+=== Virtual Memory Mapping
 
-**Page-Aligned Allocation**:
-```math
+_Page-Aligned Allocation_:
+$
 \text{page\_align}(addr) = \text{align}(addr, 4096)
-```
+$
 
-**Memory Protection Regions**:
-```math
+_Memory Protection Regions_:
+$
 \mathcal{P}_{regions} = \{(r, prot) : r \in \mathcal{M}_{regions}, prot \in \text{Permissions}\}
-```
+$
 
-### Memory Compaction
+=== Memory Compaction
 
-**Fragmentation Measure**:
-```math
+_Fragmentation Measure_:
+$
 \delta_{fragmentation} = 1 - \frac{\sum_{i=1}^n size_i}{\max_i(base_i + size_i) - \min_i(base_i)}
-```
+$
 
-**Compaction Algorithm**:
-```math
+_Compaction Algorithm*:
+$
 \phi_{compact}: \mathcal{M}_{regions} \to \mathcal{M}_{regions}' \text{ with } \delta'_{fragmentation} < \delta_{fragmentation}
-```
+$
 
 This mathematical specification provides a comprehensive framework for understanding and implementing memory allocation algorithms in the MiniElfLinker while following the humble, appropriate mathematical notation guidelines.

@@ -1,47 +1,47 @@
-# ELF Data Structures Mathematical Specification
+= ELF Data Structures Mathematical Specification
 
-## Overview
+== Overview
 
 This specification defines the mathematical models and data structures used to represent ELF (Executable and Linkable Format) files in memory. Following the Mathematical-Driven AI Development methodology, these structures bridge the mathematical linking algorithms with practical Julia implementation.
 
-## Mathematical Model
+== Mathematical Model
 
-### ELF File Mathematical Representation
+=== ELF File Mathematical Representation
 
-**ELF File Space**:
-```math
+_ELF File Space_:
+$
 \mathcal{E}_{file} = \langle \mathcal{H}_{header}, \mathcal{S}_{sections}, \mathcal{Y}_{symbols}, \mathcal{R}_{relocations}, \mathcal{P}_{programs} \rangle
-```
+$
 
-**Structural Invariant**:
-```math
+_Structural Invariant_:
+$
 \forall e \in \mathcal{E}_{file}: \text{consistent}(\mathcal{H}, \mathcal{S}) \land \text{valid\_references}(\mathcal{S}, \mathcal{Y}) \land \text{complete\_relocations}(\mathcal{R}, \mathcal{Y})
-```
+$
 
-**Memory Representation Function**:
-```math
+_Memory Representation Function_:
+$
 \text{represent}: \text{BinaryFile} \to \mathcal{E}_{file} \cup \{\text{Error}\}
-```
+$
 
-## Core Data Structures (Non-Algorithmic Components)
+== Core Data Structures (Non-Algorithmic Components)
 
 Following the copilot guidelines, these data structures are implemented directly in Julia with clear, descriptive names since they represent static file format specifications rather than computational algorithms.
 
-### ELF Header Structure
+=== ELF Header Structure
 
-**Mathematical Model**: Header represents file metadata and format compliance
-```math
+_Mathematical Model_: Header represents file metadata and format compliance
+$
 \mathcal{H}_{header} = \{magic, class, data, version, osabi, type, machine, entry, phoff, shoff, flags, sizes\}
-```
+$
 
-**Validation Function**:
-```math
+_Validation Function_:
+$
 \text{valid\_header}(h) = (h.magic = \text{ELF\_MAGIC}) \land (h.class \in \{32, 64\}) \land (h.version = 1)
-```
+$
 
-**Implementation**:
-**Purpose**: Contains basic file information and metadata
-**Size**: 64 bytes (ELF64), 52 bytes (ELF32)
+_Implementation_:
+_Purpose_: Contains basic file information and metadata
+_Size_: 64 bytes (ELF64), 52 bytes (ELF32)
 
 ```julia
 struct ElfHeader
@@ -68,21 +68,21 @@ struct ElfHeader
 end
 ```
 
-**Key Fields**:
+_Key Fields_:
 - `entry`: Address where execution begins
 - `shoff`: Location of section headers in file
 - `shnum`: Number of sections in the file
 - `shstrndx`: Index of section containing section names
 
-### Section Header Structure
+=== Section Header Structure
 
-**Mathematical Model**: Section headers form a finite indexed collection
-```math
+_Mathematical Model_: Section headers form a finite indexed collection
+$
 \mathcal{S}_{sections} = \{s_i : i \in [0, n_{sections}]\}
-```
+$
 
-**Section Type Classification**:
-```math
+_Section Type Classification_:
+$
 \text{classify}(s) = \begin{cases}
 \text{SYMTAB} & \text{if } s.type = \text{SHT\_SYMTAB} \\
 \text{STRTAB} & \text{if } s.type = \text{SHT\_STRTAB} \\
@@ -90,16 +90,16 @@ end
 \text{RELA} & \text{if } s.type = \text{SHT\_RELA} \\
 \text{NULL} & \text{otherwise}
 \end{cases}
-```
+$
 
-**Section Filtering Operation**:
-```math
+_Section Filtering Operation_:
+$
 \text{filter\_by\_type}(sections, t) = \{s \in sections : s.type = t\}
-```
+$
 
-**Implementation**:
-**Purpose**: Describes individual sections within the ELF file
-**Size**: 64 bytes (ELF64), 40 bytes (ELF32)
+_Implementation_:
+_Purpose_: Describes individual sections within the ELF file
+_Size_: 64 bytes (ELF64), 40 bytes (ELF32)
 
 ```julia
 struct SectionHeader
@@ -116,7 +116,7 @@ struct SectionHeader
 end
 ```
 
-**Common Section Types**:
+_Common Section Types_:
 - `SHT_NULL` (0): Unused section
 - `SHT_PROGBITS` (1): Program data
 - `SHT_SYMTAB` (2): Symbol table
@@ -124,9 +124,9 @@ end
 - `SHT_RELA` (4): Relocation entries with addends
 - `SHT_REL` (9): Relocation entries without addends
 
-### Symbol Table Entry
-**Purpose**: Represents symbols (functions, variables, etc.) in the object file
-**Size**: 24 bytes (ELF64), 16 bytes (ELF32)
+=== Symbol Table Entry
+_Purpose_: Represents symbols (functions, variables, etc.) in the object file
+_Size_: 24 bytes (ELF64), 16 bytes (ELF32)
 
 ```julia
 struct SymbolTableEntry
@@ -139,21 +139,21 @@ struct SymbolTableEntry
 end
 ```
 
-**Symbol Binding** (upper 4 bits of `info`):
+_Symbol Binding_ (upper 4 bits of `info`):
 - `STB_LOCAL` (0): Local symbol
 - `STB_GLOBAL` (1): Global symbol
 - `STB_WEAK` (2): Weak symbol
 
-**Symbol Type** (lower 4 bits of `info`):
+_Symbol Type_ (lower 4 bits of `info`):
 - `STT_NOTYPE` (0): Unspecified type
 - `STT_OBJECT` (1): Data object
 - `STT_FUNC` (2): Function
 - `STT_SECTION` (3): Section symbol
 - `STT_FILE` (4): Source file name
 
-### Relocation Entry
-**Purpose**: Describes how to modify addresses during linking
-**Size**: 24 bytes (RELA), 16 bytes (REL)
+=== Relocation Entry
+_Purpose_: Describes how to modify addresses during linking
+_Size_: 24 bytes (RELA), 16 bytes (REL)
 
 ```julia
 struct RelocationEntry
@@ -163,15 +163,15 @@ struct RelocationEntry
 end
 ```
 
-**Common x86-64 Relocation Types**:
+_Common x86-64 Relocation Types_:
 - `R_X86_64_64` (1): Direct 64-bit address
 - `R_X86_64_PC32` (2): PC-relative 32-bit
 - `R_X86_64_PLT32` (4): PLT-relative 32-bit
 - `R_X86_64_GOTPC32` (26): GOT-relative 32-bit
 
-### Program Header
-**Purpose**: Describes memory segments for runtime loading
-**Size**: 56 bytes (ELF64), 32 bytes (ELF32)
+=== Program Header
+_Purpose_: Describes memory segments for runtime loading
+_Size_: 56 bytes (ELF64), 32 bytes (ELF32)
 
 ```julia
 struct ProgramHeader
@@ -186,17 +186,17 @@ struct ProgramHeader
 end
 ```
 
-**Segment Types**:
+_Segment Types_:
 - `PT_NULL` (0): Unused entry
 - `PT_LOAD` (1): Loadable segment
 - `PT_DYNAMIC` (2): Dynamic linking information
 - `PT_INTERP` (3): Interpreter path
 - `PT_PHDR` (6): Program header table
 
-## Container Structures
+== Container Structures
 
-### ElfFile
-**Purpose**: Complete in-memory representation of an ELF file
+=== ElfFile
+_Purpose_: Complete in-memory representation of an ELF file
 
 ```julia
 struct ElfFile
@@ -210,8 +210,8 @@ struct ElfFile
 end
 ```
 
-### DynamicLinker State
-**Purpose**: Maintains linking state across multiple objects
+=== DynamicLinker State
+_Purpose_: Maintains linking state across multiple objects
 
 ```julia
 mutable struct DynamicLinker
@@ -224,9 +224,9 @@ mutable struct DynamicLinker
 end
 ```
 
-## Parsing Functions
+== Parsing Functions
 
-### Header Parsing
+=== Header Parsing
 ```julia
 function parse_elf_header(io::IO)::ElfHeader
     # Read and validate magic number
@@ -244,7 +244,7 @@ function parse_elf_header(io::IO)::ElfHeader
 end
 ```
 
-### Section Parsing
+=== Section Parsing
 ```julia
 function parse_section_headers(io::IO, header::ElfHeader)::Vector{SectionHeader}
     sections = Vector{SectionHeader}(undef, header.shnum)
@@ -258,7 +258,7 @@ function parse_section_headers(io::IO, header::ElfHeader)::Vector{SectionHeader}
 end
 ```
 
-### Symbol Parsing
+=== Symbol Parsing
 ```julia
 function parse_symbol_table(io::IO, section::SectionHeader)::Vector{SymbolTableEntry}
     entry_count = section.size ÷ 24  # 24 bytes per symbol (ELF64)
@@ -273,96 +273,96 @@ function parse_symbol_table(io::IO, section::SectionHeader)::Vector{SymbolTableE
 end
 ```
 
-## Utility Functions
+== Utility Functions
 
-### Symbol Information Extraction
+=== Symbol Information Extraction
 ```julia
-# Extract binding from symbol info byte
+= Extract binding from symbol info byte
 function st_bind(info::UInt8)::UInt8
     return (info >> 4) & 0xf
 end
 
-# Extract type from symbol info byte
+= Extract type from symbol info byte
 function st_type(info::UInt8)::UInt8
     return info & 0xf
 end
 ```
 
-### Relocation Information Extraction
+=== Relocation Information Extraction
 ```julia
-# Extract symbol index from relocation info
+= Extract symbol index from relocation info
 function elf64_r_sym(info::UInt64)::UInt32
     return UInt32(info >> 32)
 end
 
-# Extract relocation type from relocation info
+= Extract relocation type from relocation info
 function elf64_r_type(info::UInt64)::UInt32
     return UInt32(info & 0xffffffff)
 end
 ```
 
-## Memory Management
+== Memory Management
 
-### Section Data Storage
+=== Section Data Storage
 - Raw section data stored in `section_data` dictionary
 - Key: section index, Value: byte array
 - Lazy loading for large sections
 
-### String Table Handling
+=== String Table Handling
 - String tables parsed into string vectors
 - Efficient lookup by index
 - Shared between multiple sections
 
-### Temporary File Management
+=== Temporary File Management
 - Archive extraction creates temporary files
 - Automatic cleanup after linking
 - Error handling for cleanup failures
 
-## Error Handling
+== Error Handling
 
-### Format Validation
+=== Format Validation
 - Magic number verification
 - Architecture compatibility checks
 - Section boundary validation
 
-### Data Integrity
+=== Data Integrity
 - Size consistency checks
 - Offset validation
 - String table bounds checking
 
-### Resource Management
+=== Resource Management
 - Memory allocation limits
 - File handle management
 - Cleanup on errors
 
-## Implementation Notes
+== Implementation Notes
 
-### Endianness Handling
+=== Endianness Handling
 - Currently supports little-endian only
 - Big-endian support planned for future versions
 - Automatic detection from ELF header
 
-### Architecture Support
+=== Architecture Support
 - Primary target: x86-64
 - Limited ARM64 support
 - Architecture-specific relocation handling
 
-### Performance Considerations
+=== Performance Considerations
 - Lazy loading of large sections
 - Memory-mapped file access for huge files
 - Efficient string table implementation
-```math
+$
 \text{Pre: } header.shoff > 0 \land header.shnum \geq 0 \land io\_valid(io)
-```
+$
 
-**Postconditions**:
-```math
+_Postconditions_:
+$
 \text{Post: } |result| = header.shnum \land \forall s \in result: valid\_section(s)
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: parse_sections: IO × ElfHeader → List(SectionHeader)
+= Mathematical model: parse_sections: IO × ElfHeader → List(SectionHeader)
 function parse_section_headers(io::IO, header::ElfHeader)::Vector{SectionHeader}
     # Implementation of: iterate over section table
     seek(io, header.shoff)                    # ↔ position to offset
@@ -374,26 +374,26 @@ function parse_section_headers(io::IO, header::ElfHeader)::Vector{SectionHeader}
 end
 ```
 
-### Symbol Table Parsing → `parse_symbol_table` function
+=== Symbol Table Parsing → `parse_symbol_table` function
 
-```math
+$
 parse\_symbols: IO \times SectionHeader \times StringTable \to List(SymbolEntry)
-```
+$
 
-**Complexity constraint**:
-```math
+_Complexity constraint_:
+$
 |result| = \frac{section.size}{24} \quad \text{(symbol entry size)}
-```
+$
 
-**Set-theoretic operation**:
-```math
+_Set-theoretic operation_:
+$
 \text{Filter: } \{s \in sections : s.type = SHT\_SYMTAB\}
 \text{Map: } \{parse\_entry(s) : s \in symbol\_sections\}
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: parse_symbols: IO × SectionHeader × StringTable → List(SymbolEntry)
+= Mathematical model: parse_symbols: IO × SectionHeader × StringTable → List(SymbolEntry)
 function parse_symbol_table(io::IO, section::SectionHeader, strings::StringTable)::Vector{SymbolEntry}
     # Implementation of: symbol_count = section.size ÷ 24
     symbol_count = div(section.size, 24)     # ↔ size calculation
@@ -407,9 +407,9 @@ function parse_symbol_table(io::IO, section::SectionHeader, strings::StringTable
 end
 ```
 
-## Complexity Analysis
+== Complexity Analysis
 
-```math
+$
 \begin{align}
 T_{header}(n) &= O(1) \quad \text{– Fixed header size} \\
 T_{sections}(k) &= O(k) \quad \text{– Linear in section count} \\
@@ -417,19 +417,19 @@ T_{symbols}(m) &= O(m) \quad \text{– Linear in symbol count} \\
 T_{strings}(s) &= O(s) \quad \text{– Linear in string table size} \\
 T_{total}(n,m,s) &= O(k + m + s) \quad \text{– Additive complexity}
 \end{align}
-```
+$
 
-**Critical path**: String table parsing with linear scan for null terminators.
+_Critical path_: String table parsing with linear scan for null terminators.
 
-## Transformation Pipeline
+== Transformation Pipeline
 
-```math
+$
 binary\_file \xrightarrow{parse\_header} header \xrightarrow{parse\_sections} sections \xrightarrow{filter\_symbols} symbol\_sections \xrightarrow{parse\_symbols} symbols
-```
+$
 
-**Code pipeline correspondence**:
+_Code pipeline correspondence_:
 ```julia
-# Mathematical pipeline: file → header → sections → symbols
+= Mathematical pipeline: file → header → sections → symbols
 function parse_elf_file(filename::String)::ElfFile
     open(filename, "r") do io
         header = parse_elf_header(io)           # ↔ parse_header
@@ -446,72 +446,72 @@ function parse_elf_file(filename::String)::ElfFile
 end
 ```
 
-## Set-Theoretic Operations
+== Set-Theoretic Operations
 
-**Section filtering by type**:
-```math
+_Section filtering by type_:
+$
 filter\_by\_type(sections, t) = \{s \in sections : s.type = t\}
-```
+$
 
-**Symbol extraction**:
-```math
+_Symbol extraction_:
+$
 extract\_symbols(sections) = \bigcup_{s \in symbol\_sections} parse\_symbols(s)
-```
+$
 
-**String resolution**:
-```math
+_String resolution_:
+$
 resolve\_names(symbols, strings) = \{s' : s' = s \text{ with } s'.name = strings[s.name\_index]\}
-```
+$
 
-## Invariant Preservation
+== Invariant Preservation
 
-```math
+$
 \text{Parse completeness: } 
 \forall f \in ValidELFFiles: parse(f) \neq Error
-```
+$
 
-```math
+$
 \text{Structure consistency: }
 |parse\_sections(io, h)| = h.shnum
-```
+$
 
-```math
+$
 \text{String resolution: }
 \forall sym \in symbols: sym.name = strings[sym.name\_index]
-```
+$
 
-### Relocation Parsing with Filtering → `parse_elf_file` function
+=== Relocation Parsing with Filtering → `parse_elf_file` function
 
-```math
+$
 parse\_relocations\_filtered: List(RelocationSection) \to List(RelocationEntry)
-```
+$
 
-**Mathematical filtering operation**: Critical improvement for basic linking
+_Mathematical filtering operation_: Critical improvement for basic linking
 
-```math
+$
 filtered\_relocations = \{r \in all\_relocations : target\_section(r) = \text{".text"}\}
-```
+$
 
-**Filter function definition**:
-```math
+_Filter function definition_:
+$
 filter(sections) = \bigcup_{s \in sections} \begin{cases}
 parse\_relocations(s) & \text{if } name(s) = \text{".rela.text"} \\
 \emptyset & \text{otherwise}
 \end{cases}
-```
+$
 
-**Complexity improvement**:
-```math
+_Complexity improvement_:
+$
 \begin{align}
 T_{original}(n) &= O(n) \quad \text{– Process all relocation sections} \\
 T_{filtered}(k) &= O(k) \quad \text{– Process only .text relocations, } k \ll n \\
 \text{Speedup} &= \frac{n}{k} \quad \text{– Significant for complex objects}
 \end{align}
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: parse_relocations_filtered: List(RelocationSection) → List(RelocationEntry)
+= Mathematical model: parse_relocations_filtered: List(RelocationSection) → List(RelocationEntry)
 function parse_elf_file(filename::String)
     # ... header and section parsing ...
     
@@ -532,14 +532,14 @@ function parse_elf_file(filename::String)
 end
 ```
 
-**Mathematical justification**: 
-```math
+_Mathematical justification_: 
+$
 \text{Basic linking requirement: } \forall r \in required\_relocations: r.target = \text{".text"}
-```
+$
 
 Therefore:
-```math
+$
 filtered\_relocations \supseteq required\_relocations
-```
+$
 
 This ensures correctness while improving performance by excluding unnecessary `.eh_frame` relocations that were causing "relocation offset exceeds region size" errors.

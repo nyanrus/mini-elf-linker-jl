@@ -8,27 +8,15 @@ Following the Mathematical-Driven AI Development Methodology, this repository or
 
 Core mathematical specifications with direct code correspondence, prioritized for active development:
 
-- **[Core Processes](specifications/core_processes.md)** - Main linker mathematical framework and operations
-- **[Data Structures](specifications/data_structures.md)** - ELF parsing and mathematical data transformation
-- **[CLI Interface](specifications/cli_spec.md)** - Command-line interface mathematical specification
-- **[Dynamic Linking](specifications/dynamic_linker_spec.md)** - Dynamic linking mathematical framework
-- **[Library Support](specifications/library_support_spec.md)** - Library resolution mathematical model
-- **[Native Parsing](specifications/native_parsing_spec.md)** - Native binary parsing algorithms
-- **[ELF Format](specifications/elf_format_spec.md)** - ELF format mathematical specification
-- **[ELF Writer](specifications/elf_writer_spec.md)** - ELF output generation mathematical model
-- **[Optimization Analysis](specifications/optimization_analysis.md)** - Complex optimization possibilities
-
-### 🎯 Strategic Analysis/ - Production Planning
-
-Comprehensive analysis for transforming the educational linker into production-ready system:
-
-- **[Production Roadmap](strategic_analysis/production_readiness_roadmap.md)** - Comprehensive deployment strategy
-- **[ELF Compliance](strategic_analysis/elf_specification_compliance.md)** - System V ABI compliance analysis  
-- **[Completion Strategy](strategic_analysis/linker_completion_strategy.md)** - Systematic implementation plan
-- **[TinyCC Integration Results](strategic_analysis/tinycc_integration_results.md)** - Real-world testing
-- **[Build Analysis](strategic_analysis/tinycc_build_iteration1_analysis.md)** - Integration case study
-- **[Testing Strategy](strategic_analysis/tinycc_build_testing_strategy.md)** - Testing methodology
-- **[Debugging Process](strategic_analysis/tinycc_debugging_iterations.md)** - Debugging documentation
+- **[Core Processes](specifications/core_processes.typ)** - Main linker mathematical framework and operations
+- **[Data Structures](specifications/data_structures.typ)** - ELF parsing and mathematical data transformation
+- **[CLI Interface](specifications/cli_spec.typ)** - Command-line interface mathematical specification
+- **[Dynamic Linking](specifications/dynamic_linker_spec.typ)** - Dynamic linking mathematical framework
+- **[Library Support](specifications/library_support_spec.typ)** - Library resolution mathematical model
+- **[Native Parsing](specifications/native_parsing_spec.typ)** - Native binary parsing algorithms
+- **[ELF Format](specifications/elf_format_spec.typ)** - ELF format mathematical specification
+- **[ELF Writer](specifications/elf_writer_spec.typ)** - ELF output generation mathematical model
+- **[Optimization Analysis](specifications/optimization_analysis.typ)** - Complex optimization possibilities
 
 ### ✅ Verification/ - Testing and Performance Baselines
 

@@ -1,12 +1,12 @@
-# Core Linker Processes Specification
+= Core Linker Processes Specification
 
-## Overview
+== Overview
 
 This specification defines the core processes that transform multiple object files into a single executable. The MiniElfLinker implements these processes using mathematically-driven algorithms for critical operations and practical Julia code for structural components.
 
-## Non-Algorithmic Components (Julia Direct Documentation)
+== Non-Algorithmic Components (Julia Direct Documentation)
 
-### Linker State Management
+=== Linker State Management
 ```julia
 """
 DynamicLinker manages the complete linking state and coordination between components.
@@ -43,7 +43,7 @@ mutable struct DynamicLinker
 end
 ```
 
-### Object Loading Interface
+=== Object Loading Interface
 ```julia
 """
 Load and validate ELF object files.
@@ -77,43 +77,43 @@ function load_object(linker::DynamicLinker, filename::String)
 end
 ```
 
-## Algorithmic Critical Components (Mathematical Analysis)
+== Algorithmic Critical Components (Mathematical Analysis)
 
-### Symbol Resolution Algorithm
+=== Symbol Resolution Algorithm
 
-**Mathematical Model**: The symbol resolution process can be modeled as a mapping from undefined symbols to their definitions across the global symbol space.
+_Mathematical Model_: The symbol resolution process can be modeled as a mapping from undefined symbols to their definitions across the global symbol space.
 
-```math
+$
 \text{Let } \mathcal{S} = \{s_1, s_2, \ldots, s_n\} \text{ be the set of all symbols}
-```
+$
 
-```math
+$
 \text{Let } \mathcal{U} \subseteq \mathcal{S} \text{ be undefined symbols}
-```
+$
 
-```math
+$
 \text{Let } \mathcal{D} \subseteq \mathcal{S} \text{ be defined symbols}
-```
+$
 
-**Resolution Function**:
-```math
+_Resolution Function_:
+$
 \delta_{resolve}: \mathcal{U} \to \mathcal{D} \cup \{\perp\}
-```
+$
 
 where $\perp$ represents unresolvable symbols.
 
-**Complexity Analysis**:
-```math
+_Complexity Analysis_:
+$
 \text{Current implementation: } T(n, m) = O(n \times m)
-```
+$
 where $n = |\mathcal{U}|$ and $m = |\mathcal{D}|$
 
-**Optimization Potential**:
-```math
+_Optimization Potential_:
+$
 \text{Hash table optimization: } T(n, m) = O(n + m)
-```
+$
 
-**Implementation with Mathematical Correspondence**:
+_Implementation with Mathematical Correspondence_:
 ```julia
 """
 Mathematical model: δ_resolve: 𝒰 → 𝒟 ∪ {⊥}
@@ -144,39 +144,39 @@ function δ_resolve_symbols(linker::DynamicLinker)::Vector{String}
 end
 ```
 
-### Memory Allocation Algorithm
+=== Memory Allocation Algorithm
 
-**Mathematical Model**: Memory allocation assigns non-overlapping address ranges to sections.
+_Mathematical Model_: Memory allocation assigns non-overlapping address ranges to sections.
 
-```math
+$
 \text{Let } \mathcal{M} = [α_{base}, α_{max}] \text{ be the memory address space}
-```
+$
 
-```math
+$
 \text{Let } \mathcal{R} = \{r_1, r_2, \ldots, r_k\} \text{ be memory regions}
-```
+$
 
-**Allocation Constraint**:
-```math
+_Allocation Constraint_:
+$
 \forall i, j \in [1, k], i \neq j: r_i \cap r_j = \emptyset
-```
+$
 
-**Allocation Function**:
-```math
+_Allocation Function_:
+$
 \phi_{allocate}: \mathcal{S}_{sections} \to \mathcal{R}_{regions}
-```
+$
 
-**Current Complexity**:
-```math
+_Current Complexity_:
+$
 T_{naive}(k) = O(k^2) \text{ for overlap detection}
-```
+$
 
-**Optimization Potential**:
-```math
+_Optimization Potential_:
+$
 T_{spatial}(k) = O(k \log k) \text{ using interval trees}
-```
+$
 
-**Implementation**:
+_Implementation_:
 ```julia
 """
 Mathematical model: φ_allocate: 𝒮_sections → ℛ_regions
@@ -216,39 +216,39 @@ function φ_allocate_memory_regions!(linker::DynamicLinker)
     linker.current_address = α_current
 end
 
-# Mathematical utility: address alignment function
+= Mathematical utility: address alignment function
 function align_address(α_address::UInt64, alignment::UInt64)::UInt64
     return (α_address + alignment - 1) & ~(alignment - 1)
 end
 ```
 
-### Relocation Application Algorithm
+=== Relocation Application Algorithm
 
-**Mathematical Model**: Relocations apply address transformations to object code.
+_Mathematical Model_: Relocations apply address transformations to object code.
 
-```math
+$
 \text{Let } \mathcal{T} = \{t_1, t_2, \ldots, t_r\} \text{ be relocation transformations}
-```
+$
 
-**Relocation Function**:
-```math
+_Relocation Function_:
+$
 \rho: \mathcal{A}_{addresses} \times \mathcal{T}_{type} \times \mathcal{V}_{value} \to \mathcal{A}_{new}
-```
+$
 
-**Type-Specific Transformations**:
-```math
+_Type-Specific Transformations_:
+$
 \rho_{R\_X86\_64\_64}(A, S, P) = S + A
-```
-```math
+$
+$
 \rho_{R\_X86\_64\_PC32}(A, S, P) = S + A - P
-```
+$
 
 where:
 - $A$ = addend
 - $S$ = symbol value  
 - $P$ = place (address being relocated)
 
-**Implementation**:
+_Implementation_:
 ```julia
 """
 Mathematical model: ρ: 𝒜_addresses × 𝒯_type × 𝒱_value → 𝒜_new
@@ -287,13 +287,13 @@ function ρ_perform_relocations!(linker::DynamicLinker)
 end
 ```
 
-## Process Composition and Pipeline
+== Process Composition and Pipeline
 
-**Mathematical Composition**: The complete linking process is a composition of mathematical functions:
+_Mathematical Composition_: The complete linking process is a composition of mathematical functions:
 
-```math
+$
 \mathcal{L} = \omega_{serialize} \circ \rho_{relocate} \circ \phi_{allocate} \circ \delta_{resolve} \circ \pi_{parse}
-```
+$
 
 Where:
 - $\pi_{parse}$: Parse ELF objects
@@ -302,7 +302,7 @@ Where:
 - $\rho_{relocate}$: Apply relocations
 - $\omega_{serialize}$: Generate executable
 
-**Implementation**:
+_Implementation_:
 ```julia
 """
 Mathematical composition: ℒ = ω_serialize ∘ ρ_relocate ∘ φ_allocate ∘ δ_resolve ∘ π_parse
@@ -336,7 +336,7 @@ function execute_linking_pipeline(input_files::Vector{String}, output_file::Stri
 end
 ```
 
-## Error Handling and Robustness (Non-Algorithmic)
+== Error Handling and Robustness (Non-Algorithmic)
 
 ```julia
 """
@@ -364,31 +364,31 @@ function safe_linking_execution(input_files, output_file; kwargs...)
 end
 ```
 
-## Performance Analysis and Optimization Opportunities
+== Performance Analysis and Optimization Opportunities
 
-**Current Complexity Bounds**:
-```math
+_Current Complexity Bounds_:
+$
 \begin{align}
 T_{parse}(f) &= O(f \times s) \text{ where } f = \text{files, } s = \text{avg sections} \\
 T_{resolve}(n, m) &= O(n \times m) \text{ where } n = \text{undefined, } m = \text{defined} \\
 T_{allocate}(k) &= O(k^2) \text{ where } k = \text{sections (overlap check)} \\
 T_{relocate}(r) &= O(r) \text{ where } r = \text{relocations}
 \end{align}
-```
+$
 
-**Optimization Potential**:
-```math
+_Optimization Potential_:
+$
 \begin{align}
 T_{resolve\_opt}(n, m) &= O(n + m) \text{ using hash tables} \\
 T_{allocate\_opt}(k) &= O(k \log k) \text{ using spatial data structures} \\
 T_{total\_current} &= O(f \times s + n \times m + k^2 + r) \\
 T_{total\_optimized} &= O(f \times s + n + m + k \log k + r)
 \end{align}
-```
+$
 
-```math
+$
 \mathcal{L}_{state} = \langle \mathcal{O}, \Sigma, \mathcal{M}, \alpha_{base}, \alpha_{next}, \mathcal{T} \rangle
-```
+$
 
 where:
 - $\mathcal{O} = \{o_i\}_{i=1}^n$ is the set of loaded ELF objects
@@ -397,9 +397,9 @@ where:
 - $\alpha_{base}, \alpha_{next} \in \mathbb{N}_{64}$ are base and next addresses
 - $\mathcal{T}$ is the set of temporary files for cleanup
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: L_state = ⟨O, Σ, M, α_base, α_next, T⟩
+= Mathematical model: L_state = ⟨O, Σ, M, α_base, α_next, T⟩
 mutable struct DynamicLinker
     loaded_objects::Vector{ElfFile}           # ↔ O = {o_i}
     global_symbol_table::Dict{String, Symbol} # ↔ Σ: String → Symbol  
@@ -410,26 +410,26 @@ mutable struct DynamicLinker
 end
 ```
 
-### Symbol Resolution Function → `resolve_symbols` function
+=== Symbol Resolution Function → `resolve_symbols` function
 
-```math
+$
 \phi_{resolve}: \mathcal{L}_{state} \times \mathcal{P} \to \mathcal{L}_{state}' \cup \{\bot\}
-```
+$
 
-**Mathematical operation**: Global symbol table construction with library resolution
+_Mathematical operation_: Global symbol table construction with library resolution
 
-```math
+$
 \Sigma'(name) = \begin{cases}
 definition.address & \text{if } name \in \bigcup_{o \in \mathcal{O}} symbols(o) \\
 library\_lookup(name, \mathcal{P}) & \text{if } name \notin local\_symbols \\
 \text{weak\_default} & \text{if } binding(name) = STB\_WEAK \\
 \bot & \text{if } binding(name) = STB\_STRONG \land name \text{ unresolved}
 \end{cases}
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: φ_resolve: L_state × P → L_state' ∪ {⊥}
+= Mathematical model: φ_resolve: L_state × P → L_state' ∪ {⊥}
 function resolve_symbols(linker::DynamicLinker)::Vector{String}
     # Implementation of: Σ'(name) construction with library lookup
     unresolved_symbols = String[]
@@ -451,26 +451,26 @@ function resolve_symbols(linker::DynamicLinker)::Vector{String}
 end
 ```
 
-### Memory Allocation Function → `allocate_memory_regions!` function
+=== Memory Allocation Function → `allocate_memory_regions!` function
 
-```math
+$
 \phi_{allocate}: \mathcal{L}_{state} \to \mathcal{L}_{state}
-```
+$
 
-**Mathematical constraint**: Non-overlapping memory allocation with alignment
+_Mathematical constraint_: Non-overlapping memory allocation with alignment
 
-```math
+$
 \forall m_i, m_j \in \mathcal{M}: i \neq j \implies [\alpha_{base}(m_i), \alpha_{base}(m_i) + size(m_i)) \cap [\alpha_{base}(m_j), \alpha_{base}(m_j) + size(m_j)) = \emptyset
-```
+$
 
-**Address computation**:
-```math
+_Address computation_:
+$
 \alpha_{next}' = \max_{m \in \mathcal{M}} (\alpha_{base}(m) + size(m))
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: φ_allocate: L_state → L_state
+= Mathematical model: φ_allocate: L_state → L_state
 function allocate_memory_regions!(linker::DynamicLinker)
     # Implementation of: non-overlapping memory region assignment
     current_address = linker.base_address                   # ↔ α_base initialization
@@ -499,15 +499,15 @@ function allocate_memory_regions!(linker::DynamicLinker)
 end
 ```
 
-### Complete Linking Pipeline → `link_to_executable` function
+=== Complete Linking Pipeline → `link_to_executable` function
 
-```math
+$
 \phi_{complete}: \text{FilePath}^n \times \text{FilePath} \to \{0, 1\}
-```
+$
 
-**Mathematical pipeline**: Complete ELF processing workflow
+_Mathematical pipeline_: Complete ELF processing workflow
 
-```math
+$
 \begin{align}
 \{f_1, f_2, \ldots, f_n\} &\xrightarrow{\phi_{parse}^n} \{o_1, o_2, \ldots, o_n\} \\
 &\xrightarrow{\phi_{load}} \mathcal{L}_{state} \\
@@ -516,11 +516,11 @@ end
 &\xrightarrow{\phi_{relocate}} \mathcal{L}_{state}''' \\
 &\xrightarrow{\phi_{serialize}} \text{ExecutableBinary}
 \end{align}
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: φ_complete: FilePath^n × FilePath → {0,1}
+= Mathematical model: φ_complete: FilePath^n × FilePath → {0,1}
 function link_to_executable(object_files::Vector{String}, output_name::String)::Bool
     # Implementation of: complete linking pipeline composition
     try
@@ -556,42 +556,42 @@ function link_to_executable(object_files::Vector{String}, output_name::String)::
 end
 ```
 
-### Export Interface → Public API definition
+=== Export Interface → Public API definition
 
-```math
+$
 public\_interface = \{f : f \in module\_functions \land exported(f)\}
-```
+$
 
-**Set-theoretic operation**: Function export filtering
+_Set-theoretic operation_: Function export filtering
 
-```math
+$
 exported\_functions = \{parse\_elf\_file, link\_to\_executable, write\_elf\_executable, \ldots\}
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: public_interface = {f : f ∈ module_functions ∧ exported(f)}
+= Mathematical model: public_interface = {f : f ∈ module_functions ∧ exported(f)}
 
-# Core parsing interface: parse_elf_file: String → ElfFile
-# Implementation corresponds to: file_path ↦ structured_representation
+= Core parsing interface: parse_elf_file: String → ElfFile
+= Implementation corresponds to: file_path ↦ structured_representation
 export parse_elf_file
 
-# High-level linking interface: link_to_executable: List(String) × String → Boolean  
-# Implementation corresponds to: (object_files, output) ↦ success_status
+= High-level linking interface: link_to_executable: List(String) × String → Boolean  
+= Implementation corresponds to: (object_files, output) ↦ success_status
 export link_to_executable
 
-# Low-level writing interface: write_elf_executable: DynamicLinker × String × Address → Boolean
-# Implementation corresponds to: (linker_state, file, entry) ↦ serialization_result
+= Low-level writing interface: write_elf_executable: DynamicLinker × String × Address → Boolean
+= Implementation corresponds to: (linker_state, file, entry) ↦ serialization_result
 export write_elf_executable
 
-# Utility interfaces for debugging and analysis
+= Utility interfaces for debugging and analysis
 export print_symbol_table       # ↔ symbol table display
 export print_memory_layout      # ↔ memory layout visualization
 ```
 
-## Complexity Analysis
+== Complexity Analysis
 
-```math
+$
 \begin{align}
 T_{\phi_{parse}}(n,s) &= O(n \cdot s) \quad \text{– Parse n files of average size s} \\
 T_{\phi_{resolve}}(s,l) &= O(s \cdot l) \quad \text{– Resolve s symbols across l libraries} \\
@@ -600,65 +600,65 @@ T_{\phi_{relocate}}(e) &= O(e) \quad \text{– Apply e relocation entries} \\
 T_{\phi_{serialize}}(m) &= O(m) \quad \text{– Serialize m bytes to file} \\
 T_{\mathcal{L}}(n,s,l,r,e,m) &= O(n \cdot s + s \cdot l + r + e + m) \quad \text{– Total pipeline}
 \end{align}
-```
+$
 
-**Critical path**: Symbol resolution with O(s·l) complexity dominates for large codebases.
+_Critical path_: Symbol resolution with O(s·l) complexity dominates for large codebases.
 
-**Space complexity**:
-```math
+_Space complexity_:
+$
 S_{\mathcal{L}}(n,s,r) = O(n \cdot s + r \cdot p) \quad \text{where } p = \text{average memory region size}
-```
+$
 
-## Mathematical Properties and Invariants
+== Mathematical Properties and Invariants
 
-### Commutativity Properties
+=== Commutativity Properties
 
-**Object loading commutativity**:
-```math
+_Object loading commutativity_:
+$
 \forall o_1, o_2 \in \mathcal{O}: \phi_{load}(o_1) \circ \phi_{load}(o_2) = \phi_{load}(o_2) \circ \phi_{load}(o_1)
-```
-*Proof*: Object loading only adds to global symbol table and object list without modification.
+$
+_Proof_: Object loading only adds to global symbol table and object list without modification.
 
-**Symbol resolution idempotency**:
-```math
+_Symbol resolution idempotency_:
+$
 \phi_{resolve} \circ \phi_{resolve} = \phi_{resolve}
-```
-*Proof*: Once symbols are resolved, subsequent resolution has no effect.
+$
+_Proof_: Once symbols are resolved, subsequent resolution has no effect.
 
-### Correctness Invariants
+=== Correctness Invariants
 
-**Memory consistency**:
-```math
+_Memory consistency_:
+$
 \forall m_i, m_j \in \mathcal{M}: i \neq j \implies memory\_regions\_disjoint(m_i, m_j)
-```
+$
 
-**Symbol uniqueness**:
-```math
+_Symbol uniqueness_:
+$
 \forall s_1, s_2 \in \Sigma: s_1.name = s_2.name \implies s_1.address = s_2.address
-```
+$
 
-**Format compliance**:
-```math
+_Format compliance_:
+$
 \forall e \in \text{generated executables}: valid\_elf\_format(e) = \text{true}
-```
+$
 
-### Error Propagation Laws
+=== Error Propagation Laws
 
-**Pipeline failure propagation**:
-```math
+_Pipeline failure propagation_:
+$
 \phi_{k} = \bot \implies \mathcal{L} = \bot \quad \text{for any stage } k
-```
+$
 
-**Graceful degradation for weak symbols**:
-```math
+_Graceful degradation for weak symbols_:
+$
 weak\_symbol\_unresolved(s) \not\Rightarrow \mathcal{L} = \bot
-```
+$
 
-## Transformation Pipeline
+== Transformation Pipeline
 
-```math
+$
 \mathcal{F}_{input} \xrightarrow{\phi_{parse}} \mathcal{O} \xrightarrow{\phi_{load}} \mathcal{L}_{state} \xrightarrow{\phi_{resolve}} \mathcal{L}_{resolved} \xrightarrow{\phi_{allocate}} \mathcal{L}_{allocated} \xrightarrow{\phi_{relocate}} \mathcal{L}_{relocated} \xrightarrow{\phi_{serialize}} \mathcal{B}_{output}
-```
+$
 
 where:
 - $\mathcal{F}_{input} = \{f_1, f_2, \ldots, f_n\}$ are input object files
@@ -669,16 +669,16 @@ where:
 - $\mathcal{L}_{relocated}$ is state with applied relocations
 - $\mathcal{B}_{output}$ is the final executable binary
 
-**Code pipeline correspondence**:
+_Code pipeline correspondence_:
 ```julia
-# Mathematical pipeline: F_input → O → L_state → L_resolved → L_allocated → L_relocated → B_output
+= Mathematical pipeline: F_input → O → L_state → L_resolved → L_allocated → L_relocated → B_output
 
-# Stage 1: F_input → O via φ_parse
+= Stage 1: F_input → O via φ_parse
 function parse_all_objects(filenames::Vector{String})::Vector{ElfFile}
     return [parse_elf_file(f) for f in filenames]           # ↔ {φ_parse(f_i)}
 end
 
-# Stage 2: O → L_state via φ_load  
+= Stage 2: O → L_state via φ_load  
 function load_all_objects(objects::Vector{ElfFile})::DynamicLinker
     linker = DynamicLinker()                                 # ↔ L_state initialization
     for obj in objects                                       # ↔ object iteration
@@ -687,14 +687,14 @@ function load_all_objects(objects::Vector{ElfFile})::DynamicLinker
     return linker                                            # ↔ L_state result
 end
 
-# Stage 3: L_state → L_resolved via φ_resolve
+= Stage 3: L_state → L_resolved via φ_resolve
 function resolve_all_symbols!(linker::DynamicLinker)        # ↔ φ_resolve application
     unresolved = resolve_symbols(linker)                     # ↔ symbol resolution
     resolve_unresolved_symbols!(linker, unresolved)         # ↔ library resolution
     return linker                                            # ↔ L_resolved
 end
 
-# Stages 4-6: Complete remaining pipeline
+= Stages 4-6: Complete remaining pipeline
 function complete_linking_pipeline(linker::DynamicLinker, output::String)::Bool
     allocate_memory_regions!(linker)                        # ↔ L_allocated
     perform_relocations!(linker)                             # ↔ L_relocated  
@@ -702,166 +702,166 @@ function complete_linking_pipeline(linker::DynamicLinker, output::String)::Bool
 end
 ```
 
-## Set-Theoretic Operations
+== Set-Theoretic Operations
 
-**Global symbol table construction**:
-```math
+_Global symbol table construction_:
+$
 \Sigma_{global} = \bigcup_{o \in \mathcal{O}} \{s \in symbols(o) : binding(s) \neq STB\_LOCAL\}
-```
+$
 
-**Undefined symbol collection**:
-```math
+_Undefined symbol collection_:
+$
 \mathcal{U} = \{s \in \Sigma_{global} : \neg defined(s)\}
-```
+$
 
-**Memory address space union**:
-```math
+_Memory address space union_:
+$
 \mathcal{A}_{virtual} = \bigcup_{m \in \mathcal{M}} [\alpha_{base}(m), \alpha_{base}(m) + size(m))
-```
+$
 
-**Library symbol availability**:
-```math
+_Library symbol availability_:
+$
 \Sigma_{libraries} = \bigcup_{lib \in \mathcal{P}} symbols(lib)
-```
+$
 
-**Resolved symbol intersection**:
-```math
+_Resolved symbol intersection_:
+$
 \Sigma_{resolved} = \mathcal{U} \cap \Sigma_{libraries}
-```
+$
 
-## Advanced Mathematical Framework
+== Advanced Mathematical Framework
 
-### Category Theory Formulation
+=== Category Theory Formulation
 
-**Linker as a Functor**:
-```math
+_Linker as a Functor_:
+$
 \mathcal{L}: \mathbf{ElfObj} \to \mathbf{Exec}
-```
+$
 
 where $\mathbf{ElfObj}$ is the category of ELF objects with morphisms as symbol references, and $\mathbf{Exec}$ is the category of executable binaries.
 
-**Natural Transformations**:
-```math
+_Natural Transformations_:
+$
 \eta: \text{Id}_{\mathbf{ElfObj}} \Rightarrow \mathcal{L} \circ \mathcal{P}
-```
+$
 
 where $\mathcal{P}$ is the parsing functor and $\eta$ represents the natural way to embed objects into the linking process.
 
-### Homomorphism Properties
+=== Homomorphism Properties
 
-**Symbol table homomorphism**:
-```math
+_Symbol table homomorphism_:
+$
 \Sigma(o_1 \oplus o_2) = \Sigma(o_1) \oplus \Sigma(o_2)
-```
+$
 
 where $\oplus$ is the object combination operation and preserves symbol table structure.
 
-**Memory layout distributivity**:
-```math
+_Memory layout distributivity_:
+$
 \mathcal{M}(o_1 \oplus o_2) = \mathcal{M}(o_1) \oplus \mathcal{M}(o_2)
-```
+$
 
-### Algebraic Laws
+=== Algebraic Laws
 
-**Associativity of object loading**:
-```math
+_Associativity of object loading_:
+$
 (o_1 \oplus o_2) \oplus o_3 = o_1 \oplus (o_2 \oplus o_3)
-```
+$
 
-**Identity element**:
-```math
+_Identity element_:
+$
 \exists e \in \mathbf{ElfObj}: \forall o \in \mathbf{ElfObj}, e \oplus o = o \oplus e = o
-```
+$
 
-**Inverse for error recovery**:
-```math
+_Inverse for error recovery_:
+$
 \forall o \in \mathbf{ElfObj}: \exists o^{-1}: o \oplus o^{-1} = e
-```
+$
 
-## Optimization Trigger Points
+== Optimization Trigger Points
 
-### Critical Mathematical Bottlenecks
+=== Critical Mathematical Bottlenecks
 
-1. **Symbol Resolution Optimization**:
+1. _Symbol Resolution Optimization_:
    ```math
    T_{naive}(s,l) = O(s \cdot l) \quad \text{vs} \quad T_{optimized}(s,l) = O(s \log l + l \log l)
    ```
-   - **Trigger**: Hash table implementation for O(1) symbol lookup
-   - **Mathematical improvement**: Replace linear search with hash-based lookup
+   - _Trigger_: Hash table implementation for O(1) symbol lookup
+   - _Mathematical improvement_: Replace linear search with hash-based lookup
 
-2. **Memory Region Allocation**:
+2. _Memory Region Allocation_:
    ```math
    T_{allocation}(r) = O(r^2) \quad \text{vs} \quad T_{spatial}(r) = O(r \log r)
    ```
-   - **Trigger**: Spatial data structures for overlap detection
-   - **Mathematical improvement**: Use interval trees or segment trees
+   - _Trigger_: Spatial data structures for overlap detection
+   - _Mathematical improvement_: Use interval trees or segment trees
 
-3. **Relocation Application**:
+3. _Relocation Application_:
    ```math
    T_{relocations}(e) = O(e \cdot s) \quad \text{vs} \quad T_{batch}(e) = O(e + s \log s)
    ```
-   - **Trigger**: Batch processing of relocations by target region
-   - **Mathematical improvement**: Group relocations by memory region
+   - _Trigger_: Batch processing of relocations by target region
+   - _Mathematical improvement_: Group relocations by memory region
 
-4. **Binary Serialization**:
+4. _Binary Serialization_:
    ```math
    T_{serial}(m) = O(m) \quad \text{– Already optimal but can be parallelized}
    ```
-   - **Trigger**: Parallel I/O for large binaries
-   - **Mathematical improvement**: Concurrent region writing
+   - _Trigger_: Parallel I/O for large binaries
+   - _Mathematical improvement_: Concurrent region writing
 
-### Invariant Preservation Optimization
+=== Invariant Preservation Optimization
 
-**Mathematical invariant checking**:
-```math
+_Mathematical invariant checking_:
+$
 \text{Cost}_{invariant} = O(\text{check frequency} \times \text{invariant complexity})
-```
+$
 
-**Optimization strategies**:
-- **Lazy validation**: Only check invariants when state changes
-- **Incremental checking**: Update invariant proofs rather than recomputing
-- **Statistical sampling**: Probabilistic invariant validation for performance
+_Optimization strategies_:
+- _Lazy validation_: Only check invariants when state changes
+- _Incremental checking_: Update invariant proofs rather than recomputing
+- _Statistical sampling_: Probabilistic invariant validation for performance
 
-## Function Composition Properties
+== Function Composition Properties
 
-### Composition Algebra
+=== Composition Algebra
 
-**Pipeline composition**:
-```math
+_Pipeline composition_:
+$
 \mathcal{L} = \phi_n \circ \phi_{n-1} \circ \cdots \circ \phi_1
-```
+$
 
-**Associativity preservation**:
-```math
+_Associativity preservation_:
+$
 (\phi_3 \circ \phi_2) \circ \phi_1 = \phi_3 \circ (\phi_2 \circ \phi_1)
-```
+$
 
-**Partial application**:
-```math
+_Partial application_:
+$
 \mathcal{L}_{partial} = \phi_k \circ \cdots \circ \phi_1 \quad \text{for } k < n
-```
+$
 
-**Error short-circuiting**:
-```math
+_Error short-circuiting_:
+$
 \phi_i = \bot \implies \mathcal{L} = \bot \quad \text{for any } i \in [1,n]
-```
+$
 
-### Monadic Error Handling
+=== Monadic Error Handling
 
-**Linker monad**:
-```math
+_Linker monad_:
+$
 \mathcal{M}_{\mathcal{L}} = \text{Result}[\mathcal{L}_{state}, \text{Error}]
-```
+$
 
-**Bind operation**:
-```math
+_Bind operation_:
+$
 \phi_i \gg= \phi_{i+1} = \begin{cases}
 \phi_{i+1}(result) & \text{if } \phi_i = \text{Success}(result) \\
 \text{Error}(e) & \text{if } \phi_i = \text{Error}(e)
 \end{cases}
-```
+$
 
-**Monadic composition**:
-```math
+_Monadic composition_:
+$
 \mathcal{L}_{monadic} = \phi_1 \gg= \phi_2 \gg= \cdots \gg= \phi_n
-```
+$
