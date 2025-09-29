@@ -125,8 +125,11 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
         min_text_addr = minimum(r.base_address for r in text_regions)
         max_text_addr = maximum(r.base_address + r.size for r in text_regions)
         
-        # Calculate file offset for text segment (after headers)
-        text_file_offset = 0x200  # After headers
+        # Calculate file offset for text segment - must match write_elf_executable calculation
+        # data_offset = elf_header_size + ph_table_size, then page-aligned
+        data_offset_calc = elf_header_size + ph_table_size
+        page_size = 0x1000
+        text_file_offset = (data_offset_calc + page_size - 1) & ~(page_size - 1)
         total_size = max_text_addr - min_text_addr
         
         push!(program_headers, ProgramHeader(
