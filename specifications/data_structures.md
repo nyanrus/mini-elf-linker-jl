@@ -1,12 +1,45 @@
-# ELF Data Structures Specification
+# ELF Data Structures Mathematical Specification
 
 ## Overview
 
-This specification defines the data structures used to represent ELF (Executable and Linkable Format) files in memory. These structures correspond directly to the binary format specified in the ELF standard.
+This specification defines the mathematical models and data structures used to represent ELF (Executable and Linkable Format) files in memory. Following the Mathematical-Driven AI Development methodology, these structures bridge the mathematical linking algorithms with practical Julia implementation.
 
-## Core Data Structures
+## Mathematical Model
 
-### ELF Header
+### ELF File Mathematical Representation
+
+**ELF File Space**:
+```math
+\mathcal{E}_{file} = \langle \mathcal{H}_{header}, \mathcal{S}_{sections}, \mathcal{Y}_{symbols}, \mathcal{R}_{relocations}, \mathcal{P}_{programs} \rangle
+```
+
+**Structural Invariant**:
+```math
+\forall e \in \mathcal{E}_{file}: \text{consistent}(\mathcal{H}, \mathcal{S}) \land \text{valid\_references}(\mathcal{S}, \mathcal{Y}) \land \text{complete\_relocations}(\mathcal{R}, \mathcal{Y})
+```
+
+**Memory Representation Function**:
+```math
+\text{represent}: \text{BinaryFile} \to \mathcal{E}_{file} \cup \{\text{Error}\}
+```
+
+## Core Data Structures (Non-Algorithmic Components)
+
+Following the copilot guidelines, these data structures are implemented directly in Julia with clear, descriptive names since they represent static file format specifications rather than computational algorithms.
+
+### ELF Header Structure
+
+**Mathematical Model**: Header represents file metadata and format compliance
+```math
+\mathcal{H}_{header} = \{magic, class, data, version, osabi, type, machine, entry, phoff, shoff, flags, sizes\}
+```
+
+**Validation Function**:
+```math
+\text{valid\_header}(h) = (h.magic = \text{ELF\_MAGIC}) \land (h.class \in \{32, 64\}) \land (h.version = 1)
+```
+
+**Implementation**:
 **Purpose**: Contains basic file information and metadata
 **Size**: 64 bytes (ELF64), 52 bytes (ELF32)
 
@@ -41,7 +74,30 @@ end
 - `shnum`: Number of sections in the file
 - `shstrndx`: Index of section containing section names
 
-### Section Header
+### Section Header Structure
+
+**Mathematical Model**: Section headers form a finite indexed collection
+```math
+\mathcal{S}_{sections} = \{s_i : i \in [0, n_{sections}]\}
+```
+
+**Section Type Classification**:
+```math
+\text{classify}(s) = \begin{cases}
+\text{SYMTAB} & \text{if } s.type = \text{SHT\_SYMTAB} \\
+\text{STRTAB} & \text{if } s.type = \text{SHT\_STRTAB} \\
+\text{PROGBITS} & \text{if } s.type = \text{SHT\_PROGBITS} \\
+\text{RELA} & \text{if } s.type = \text{SHT\_RELA} \\
+\text{NULL} & \text{otherwise}
+\end{cases}
+```
+
+**Section Filtering Operation**:
+```math
+\text{filter\_by\_type}(sections, t) = \{s \in sections : s.type = t\}
+```
+
+**Implementation**:
 **Purpose**: Describes individual sections within the ELF file
 **Size**: 64 bytes (ELF64), 40 bytes (ELF32)
 
