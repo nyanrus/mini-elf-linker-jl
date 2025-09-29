@@ -397,8 +397,9 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
             
             # For segments, calculate the correct file offset based on virtual address mapping
             if ph.type == PT_LOAD && ph.vaddr == 0x400000  # First LOAD segment includes ELF headers
-                # For the first LOAD segment, we need to write regions at their correct file offsets
-                # But avoid overwriting the ELF header, program headers, and interpreter string
+                # PRODUCTION FIX: Correct file offset calculation for first LOAD segment
+                # The first LOAD segment contains headers + code, but code must be placed at page boundaries
+                
                 headers_end = elf_header_size + length(program_headers) * 56
                 
                 # Find INTERP segment to avoid overwriting it
@@ -412,18 +413,45 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
                 end
                 
                 for region in segment_regions
-                    region_file_offset = region.base_address - ph.vaddr  # Offset within segment
-                    region_file_end = region_file_offset + region.size
-                    
-                    # Only write if the region doesn't overlap with headers or interpreter
-                    overlaps_headers = region_file_offset < headers_end
-                    overlaps_interp = (interp_start > 0 && 
-                                     region_file_offset < interp_end && 
-                                     region_file_end > interp_start)
-                    
-                    if !overlaps_headers && !overlaps_interp
-                        seek(io, region_file_offset)
-                        write(io, region.data)
+                    # PRODUCTION FIX: Map virtual address to correct file offset
+                    # For executable regions, use the file offset from the corresponding program header
+                    if (region.permissions & 0x1) != 0  # Executable region
+                        # Find the executable LOAD segment that contains this region
+                        exec_ph = findfirst(program_headers) do exec_ph
+                            exec_ph.type == PT_LOAD && 
+                            (exec_ph.flags & PF_X) != 0 &&
+                            region.base_address >= exec_ph.vaddr &&
+                            region.base_address < exec_ph.vaddr + exec_ph.memsz
+                        end
+                        
+                        if exec_ph !== nothing
+                            exec_segment = program_headers[exec_ph]
+                            # Calculate offset within the executable segment
+                            region_offset_in_segment = region.base_address - exec_segment.vaddr
+                            region_file_offset = exec_segment.offset + region_offset_in_segment
+                            
+                            println("🔧 Writing executable region at vaddr 0x$(string(region.base_address, base=16)) to file offset 0x$(string(region_file_offset, base=16))")
+                            seek(io, region_file_offset)
+                            write(io, region.data)
+                        else
+                            @warn "Could not find executable program header for region at 0x$(string(region.base_address, base=16))"
+                        end
+                    else
+                        # Non-executable regions use the old logic
+                        region_file_offset = region.base_address - ph.vaddr  # Offset within segment
+                        region_file_end = region_file_offset + region.size
+                        
+                        # Only write if the region doesn't overlap with headers or interpreter
+                        overlaps_headers = region_file_offset < headers_end
+                        overlaps_interp = (interp_start > 0 && 
+                                         region_file_offset < interp_end && 
+                                         region_file_end > interp_start)
+                        
+                        if !overlaps_headers && !overlaps_interp
+                            println("🔧 Writing non-exec region at vaddr 0x$(string(region.base_address, base=16)) to file offset 0x$(string(region_file_offset, base=16))")
+                            seek(io, region_file_offset)
+                            write(io, region.data)
+                        end
                     end
                 end
             else
