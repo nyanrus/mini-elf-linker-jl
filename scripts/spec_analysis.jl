@@ -95,12 +95,12 @@ function analyze_elf_specifications()
         SpecificationRequirement(
             "Program Headers", "PT_GNU_STACK", 
             "Stack permissions specification",
-            "GNU Extension", true, "❌ Missing", "Medium"
+            "GNU Extension", true, "✅ Implemented", "Medium"
         ),
         SpecificationRequirement(
             "Program Headers", "PT_GNU_RELRO", 
             "Read-only after relocation segment",
-            "GNU Extension", true, "❌ Missing", "Medium"
+            "GNU Extension", true, "✅ Implemented", "Medium"
         ),
         
         # Section Header Requirements
