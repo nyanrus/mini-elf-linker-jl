@@ -17,3 +17,7 @@ test_final_*
 test_cleaned_*
 production_test
 test_output
+
+# TinyCC source and build artifacts
+tinycc_source/
+tinycc_build/
