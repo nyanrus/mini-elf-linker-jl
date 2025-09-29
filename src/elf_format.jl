@@ -178,6 +178,152 @@ const R_X86_64_TLSDESC_CALL = 35    # TLS descriptor call
 const R_X86_64_TLSDESC = 36  # TLS descriptor: S
 const R_X86_64_IRELATIVE = 37 # Indirect relative: B + A
 
+# Dynamic Section Entry Types (DT_* constants)
+# Mathematical model: DynamicEntry = (tag, value) where tag ∈ DT_*
+const DT_NULL = 0          # End of dynamic array
+const DT_NEEDED = 1        # Name of needed library  
+const DT_PLTRELSZ = 2      # Size in bytes of PLT relocations
+const DT_PLTGOT = 3        # Address of PLT/GOT
+const DT_HASH = 4          # Address of symbol hash table
+const DT_STRTAB = 5        # Address of string table
+const DT_SYMTAB = 6        # Address of symbol table
+const DT_RELA = 7          # Address of Rela relocations
+const DT_RELASZ = 8        # Total size of Rela relocations
+const DT_RELAENT = 9       # Size of one Rela relocation
+const DT_STRSZ = 10        # Size of string table
+const DT_SYMENT = 11       # Size of one symbol table entry
+const DT_INIT = 12         # Address of init function
+const DT_FINI = 13         # Address of fini function
+const DT_SONAME = 14       # Name of shared object
+const DT_RPATH = 15        # Library search path (deprecated)
+const DT_SYMBOLIC = 16     # Symbolic resolution flag
+const DT_REL = 17          # Address of Rel relocations
+const DT_RELSZ = 18        # Total size of Rel relocations
+const DT_RELENT = 19       # Size of one Rel relocation
+const DT_PLTREL = 20       # Type of relocation in PLT
+const DT_DEBUG = 21        # Debug information
+const DT_TEXTREL = 22      # Text relocations flag
+const DT_JMPREL = 23       # Address of PLT relocations
+const DT_BIND_NOW = 24     # Process relocations at program start
+const DT_INIT_ARRAY = 25   # Array with addresses of init functions
+const DT_FINI_ARRAY = 26   # Array with addresses of fini functions
+const DT_INIT_ARRAYSZ = 27 # Size in bytes of DT_INIT_ARRAY
+const DT_FINI_ARRAYSZ = 28 # Size in bytes of DT_FINI_ARRAY
+const DT_RUNPATH = 29      # Library search path
+const DT_FLAGS = 30        # Flags for object being loaded
+const DT_ENCODING = 32     # Start of encoded range
+const DT_PREINIT_ARRAY = 32     # Array with addresses of preinit functions
+const DT_PREINIT_ARRAYSZ = 33   # Size in bytes of DT_PREINIT_ARRAY
+const DT_MAXPOSTAGS = 34   # End of range using d_val
+
+# GNU extensions
+const DT_GNU_HASH = 0x6ffffef5      # GNU-style hash table
+const DT_VERSYM = 0x6ffffff0        # Version symbol table
+const DT_RELACOUNT = 0x6ffffff9     # Count of RELATIVE relocations
+const DT_RELCOUNT = 0x6ffffffa      # Count of RELATIVE relocations
+const DT_FLAGS_1 = 0x6ffffffb       # Extended flags
+const DT_VERDEF = 0x6ffffffc        # Version definition table
+const DT_VERDEFNUM = 0x6ffffffd     # Number of version definitions
+const DT_VERNEED = 0x6ffffffe       # Version dependency table
+const DT_VERNEEDNUM = 0x6fffffff    # Number of version dependencies
+
+# Dynamic Section Entry structure (64-bit)
+struct DynamicEntry
+    tag::UInt64        # Entry type (DT_*)
+    value::UInt64      # Value or address
+end
+
+"""
+    DynamicSection
+
+Mathematical model: 𝒟 = {(tag_i, value_i)}_{i=0}^{n-1} ∪ {(DT_NULL, 0)}  
+Represents the .dynamic section containing runtime linking information.
+"""
+mutable struct DynamicSection
+    entries::Vector{DynamicEntry}           # Dynamic entries
+    string_table::Vector{UInt8}             # Dynamic string table (.dynstr)
+    string_offsets::Dict{String, UInt32}    # String → offset mapping
+    
+    function DynamicSection()
+        new(DynamicEntry[], UInt8[], Dict{String, UInt32}())
+    end
+end
+
+"""
+    add_needed_library!(dynamic::DynamicSection, library_name::String)
+
+Mathematical model: add_dependency: (𝒟, library) → 𝒟'
+Add a DT_NEEDED entry for a required library.
+"""
+function add_needed_library!(dynamic::DynamicSection, library_name::String)
+    # Add string to dynamic string table
+    offset = add_dynamic_string!(dynamic, library_name)
+    
+    # Add DT_NEEDED entry
+    entry = DynamicEntry(DT_NEEDED, UInt64(offset))
+    push!(dynamic.entries, entry)
+end
+
+"""
+    add_dynamic_string!(dynamic::DynamicSection, str::String) → UInt32
+
+Add string to dynamic string table and return offset.
+"""
+function add_dynamic_string!(dynamic::DynamicSection, str::String)
+    if haskey(dynamic.string_offsets, str)
+        return dynamic.string_offsets[str]
+    end
+    
+    # Add string at current end of table
+    offset = UInt32(length(dynamic.string_table))
+    
+    # Append string bytes plus null terminator
+    append!(dynamic.string_table, Vector{UInt8}(str))
+    push!(dynamic.string_table, 0x00)  # null terminator
+    
+    dynamic.string_offsets[str] = offset
+    return offset
+end
+
+"""
+    finalize_dynamic_section!(dynamic::DynamicSection, linker) 
+
+Mathematical model: finalize: 𝒟 → 𝒟_complete
+Complete the dynamic section by adding all required entries and NULL terminator.
+"""
+function finalize_dynamic_section!(dynamic::DynamicSection, linker)
+    # Add essential dynamic entries based on linker state
+    
+    # String table
+    if !isempty(dynamic.string_table)
+        push!(dynamic.entries, DynamicEntry(DT_STRTAB, 0x0))  # Address filled later
+        push!(dynamic.entries, DynamicEntry(DT_STRSZ, UInt64(length(dynamic.string_table))))
+    end
+    
+    # Symbol table - will be implemented when we add dynamic symbol support
+    # push!(dynamic.entries, DynamicEntry(DT_SYMTAB, get_dynsym_address(linker)))
+    # push!(dynamic.entries, DynamicEntry(DT_SYMENT, UInt64(sizeof(SymbolTableEntry))))
+    
+    # Relocations - will be implemented with enhanced relocation output
+    # if !isempty(linker.relocations)
+    #     push!(dynamic.entries, DynamicEntry(DT_RELA, get_rela_address(linker)))
+    #     push!(dynamic.entries, DynamicEntry(DT_RELASZ, get_rela_size(linker)))
+    #     push!(dynamic.entries, DynamicEntry(DT_RELAENT, UInt64(sizeof(RelocationEntry))))
+    # end
+    
+    # PLT relocations
+    if !isempty(linker.plt.entries)
+        push!(dynamic.entries, DynamicEntry(DT_PLTGOT, linker.got.base_address))
+        # PLT relocation details will be filled when PLT relocations are implemented
+        # push!(dynamic.entries, DynamicEntry(DT_PLTRELSZ, get_plt_reloc_size(linker)))
+        # push!(dynamic.entries, DynamicEntry(DT_PLTREL, UInt64(DT_RELA)))
+        # push!(dynamic.entries, DynamicEntry(DT_JMPREL, get_plt_reloc_address(linker)))
+    end
+    
+    # Terminator - must be last
+    push!(dynamic.entries, DynamicEntry(DT_NULL, 0))
+end
+
 # Helper functions for symbol info
 st_bind(info::UInt8) = (info >> 4) & 0xf
 st_type(info::UInt8) = info & 0xf

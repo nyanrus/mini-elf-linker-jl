@@ -54,7 +54,7 @@ end
 """
     DynamicLinker
 
-Mathematical model: S_Δ = ⟨O, Σ, M, α_base, α_next, T, GOT, PLT, RelocationEngine⟩
+Mathematical model: S_Δ = ⟨O, Σ, M, α_base, α_next, T, GOT, PLT, RelocationEngine, DynSection⟩
 Main dynamic linker state representing the complete linking context.
 
 State space components:
@@ -67,6 +67,7 @@ State space components:
 - got ∈ GlobalOffsetTable: Enhanced GOT for dynamic symbols
 - plt ∈ ProcedureLinkageTable: Enhanced PLT for lazy resolution  
 - relocation_dispatcher ∈ RelocationDispatcher: Complete relocation engine
+- dynamic_section ∈ DynamicSection: Dynamic linking metadata (.dynamic section)
 """
 mutable struct DynamicLinker
     loaded_objects::Vector{ElfFile}                    # ↔ O = {o_i}
@@ -78,6 +79,7 @@ mutable struct DynamicLinker
     got::GlobalOffsetTable                             # ↔ Enhanced GOT structure
     plt::ProcedureLinkageTable                        # ↔ Enhanced PLT structure  
     relocation_dispatcher::RelocationDispatcher       # ↔ Complete relocation engine
+    dynamic_section::DynamicSection                   # ↔ Dynamic linking metadata
 end
 
 """
@@ -93,8 +95,9 @@ function DynamicLinker(alpha_base::UInt64 = UInt64(0x400000))
     got = GlobalOffsetTable(alpha_base + 0x100000)  # GOT at base + 1MB  
     plt = ProcedureLinkageTable(alpha_base + 0x110000)  # PLT at base + 1MB + 64KB
     relocation_dispatcher = RelocationDispatcher()
+    dynamic_section = DynamicSection()
     
-    # Initialize linker state: S_Δ = ⟨O, Σ, M, α_base, α_next, T, GOT, PLT, RelocationEngine⟩
+    # Initialize linker state: S_Δ = ⟨O, Σ, M, α_base, α_next, T, GOT, PLT, RelocationEngine, DynSection⟩
     return DynamicLinker(
         ElfFile[],                    # ↔ O = ∅ (empty object set)
         Dict{String, Symbol}(),       # ↔ Σ = ∅ (empty symbol table)
@@ -104,7 +107,8 @@ function DynamicLinker(alpha_base::UInt64 = UInt64(0x400000))
         String[],                     # ↔ T = ∅ (empty temp files)
         got,                          # ↔ Enhanced GOT structure
         plt,                          # ↔ Enhanced PLT structure
-        relocation_dispatcher         # ↔ Complete relocation engine
+        relocation_dispatcher,        # ↔ Complete relocation engine
+        dynamic_section               # ↔ Dynamic section metadata
     )
 end
 
@@ -606,6 +610,60 @@ function allocate_memory_regions!(linker::DynamicLinker)
         println("Allocated PLT memory region at 0x$(string(plt_base, base=16)) ($(plt_size) bytes)")
     end
     
+    # Allocate dynamic section memory region if present
+    if !isempty(linker.dynamic_section.entries)
+        # Dynamic section contains DynamicEntry structs (16 bytes each on 64-bit)
+        dynamic_base = align_address(alpha_current, UInt64(8))  # 8-byte align
+        dynamic_size = UInt64(length(linker.dynamic_section.entries) * 16)  # 16 bytes per entry
+        alpha_current = dynamic_base + dynamic_size
+        
+        # Serialize dynamic entries to binary format
+        dynamic_data = UInt8[]
+        for entry in linker.dynamic_section.entries
+            # Append tag (8 bytes) and value (8 bytes) in little-endian
+            append!(dynamic_data, reinterpret(UInt8, [entry.tag]))
+            append!(dynamic_data, reinterpret(UInt8, [entry.value]))
+        end
+        
+        dynamic_region = MemoryRegion(
+            dynamic_data,
+            dynamic_base,
+            dynamic_size,
+            0x4  # R-- permissions (dynamic section is read-only)
+        )
+        push!(linker.memory_regions, dynamic_region)
+        println("Allocated dynamic section at 0x$(string(dynamic_base, base=16)) ($(dynamic_size) bytes)")
+        
+        # Also allocate dynamic string table if present
+        if !isempty(linker.dynamic_section.string_table)
+            dynstr_base = align_address(alpha_current, UInt64(1))  # byte align
+            dynstr_size = UInt64(length(linker.dynamic_section.string_table))
+            alpha_current = dynstr_base + dynstr_size
+            
+            dynstr_region = MemoryRegion(
+                copy(linker.dynamic_section.string_table),
+                dynstr_base,
+                dynstr_size,
+                0x4  # R-- permissions (string table is read-only)
+            )
+            push!(linker.memory_regions, dynstr_region)
+            println("Allocated dynamic string table at 0x$(string(dynstr_base, base=16)) ($(dynstr_size) bytes)")
+            
+            # Update DT_STRTAB entry with actual address
+            for i in 1:length(linker.dynamic_section.entries)
+                if linker.dynamic_section.entries[i].tag == DT_STRTAB
+                    linker.dynamic_section.entries[i] = DynamicEntry(DT_STRTAB, dynstr_base)
+                    # Also update the serialized data
+                    offset = (i - 1) * 16 + 8  # Skip to value field
+                    for j in 1:8
+                        dynamic_region.data[offset + j] = UInt8((dynstr_base >> ((j - 1) * 8)) & 0xff)
+                    end
+                    break
+                end
+            end
+        end
+    end
+    
     # Update final next_address
     linker.next_address = alpha_current
     
@@ -933,7 +991,12 @@ function link_objects(filenames::Vector{String}; base_address::UInt64 = UInt64(0
     # Setup dynamic linking infrastructure (GOT/PLT) for external symbols
     dynamic_symbols = setup_dynamic_linking!(linker)
     
-    # Allocate memory regions (now includes GOT/PLT if created)
+    # Setup dynamic section with required library information
+    if !isempty(dynamic_symbols) || !isempty(library_names)
+        setup_dynamic_section!(linker, library_names)
+    end
+    
+    # Allocate memory regions (now includes GOT/PLT/Dynamic section if created)
     allocate_memory_regions!(linker)
     
     # Perform relocations
@@ -1150,4 +1213,27 @@ function setup_dynamic_linking!(linker::DynamicLinker)
     end
     
     return dynamic_symbols
+end
+
+"""
+    setup_dynamic_section!(linker::DynamicLinker, required_libraries::Vector{String})
+
+Mathematical model: generate_dynamic_metadata: LinkerState → DynamicSection
+Generate .dynamic section entries for runtime linking information.
+"""
+function setup_dynamic_section!(linker::DynamicLinker, required_libraries::Vector{String} = String[])
+    # Add required library dependencies
+    for lib in required_libraries
+        add_needed_library!(linker.dynamic_section, lib)
+    end
+    
+    # Add standard C library if not explicitly specified and system libraries are enabled
+    if !any(lib -> contains(lib, "libc"), required_libraries)
+        add_needed_library!(linker.dynamic_section, "libc.so.6")
+    end
+    
+    # Finalize the dynamic section with all required entries
+    finalize_dynamic_section!(linker.dynamic_section, linker)
+    
+    println("Generated dynamic section with $(length(linker.dynamic_section.entries)) entries")
 end

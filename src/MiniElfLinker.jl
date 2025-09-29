@@ -9,6 +9,7 @@ export LinkerOptions, parse_arguments, show_help, show_version, execute_linker, 
 # Enhanced production-ready components
 export GlobalOffsetTable, ProcedureLinkageTable, PLTEntry, create_plt_entry, create_plt_resolver_entry
 export RelocationDispatcher, RelocationHandler, apply_relocation!, UnsupportedRelocationError
+export DynamicSection, DynamicEntry, add_needed_library!, finalize_dynamic_section!
 
 include("elf_format.jl")
 include("elf_parser.jl")
