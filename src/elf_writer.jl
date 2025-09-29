@@ -164,6 +164,57 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
         ))
     end
     
+    # Add PT_INTERP program header for dynamic linking (if dynamic symbols present)
+    if !isempty(linker.dynamic_section.entries) && linker.dynamic_section.entries[end].tag != DT_NULL
+        # Standard Linux x86-64 dynamic linker path
+        interp_path = "/lib64/ld-linux-x86-64.so.2"
+        interp_size = UInt64(length(interp_path) + 1)  # +1 for null terminator
+        
+        # Find a suitable location for the interpreter string (after headers)
+        interp_offset = elf_header_size + ph_table_size + 0x40  # Some padding
+        interp_vaddr = base_addr + interp_offset
+        
+        push!(program_headers, ProgramHeader(
+            PT_INTERP,                  # type
+            PF_R,                      # flags (Read only)
+            interp_offset,             # offset in file
+            interp_vaddr,              # virtual address
+            interp_vaddr,              # physical address  
+            interp_size,               # size in file
+            interp_size,               # size in memory
+            0x1                        # align (byte alignment)
+        ))
+    end
+    
+    # Add PT_DYNAMIC program header for dynamic section
+    if !isempty(linker.dynamic_section.entries)
+        # Find the dynamic section memory region
+        dynamic_region = nothing
+        for region in linker.memory_regions
+            # Look for region that looks like dynamic section (read-only, proper size)
+            if region.permissions == 0x4 && length(region.data) == length(linker.dynamic_section.entries) * 16
+                dynamic_region = region
+                break
+            end
+        end
+        
+        if dynamic_region !== nothing
+            # Calculate dynamic section file offset
+            dynamic_offset = UInt64(0x2000)  # Standard offset for dynamic section
+            
+            push!(program_headers, ProgramHeader(
+                PT_DYNAMIC,                # type
+                PF_R | PF_W,              # flags (Read + Write for runtime updates)
+                dynamic_offset,            # offset in file
+                dynamic_region.base_address, # virtual address
+                dynamic_region.base_address, # physical address
+                dynamic_region.size,       # size in file
+                dynamic_region.size,       # size in memory
+                0x8                        # align (8-byte alignment for 64-bit)
+            ))
+        end
+    end
+    
     # Add GNU_STACK program header (required for modern Linux executables)
     push!(program_headers, ProgramHeader(
         PT_GNU_STACK,               # type

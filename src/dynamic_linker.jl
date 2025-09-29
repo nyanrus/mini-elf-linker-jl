@@ -52,62 +52,9 @@ mutable struct MemoryRegion
 end
 
 """
-    PLTEntry
-
-Mathematical model: PLT entry for procedure linkage table
-Represents a single PLT (Procedure Linkage Table) entry for dynamic symbol resolution.
-
-PLT entry structure (x86-64):
-```asm
-jmp *GOT[n]     # Jump to GOT entry
-push index      # Push relocation index
-jmp PLT[0]      # Jump to resolver
-```
-"""
-struct PLTEntry
-    symbol_name::String    # Symbol this entry resolves
-    got_offset::UInt64     # Offset into GOT table  
-    plt_offset::UInt64     # Offset of this PLT entry
-    reloc_index::UInt32    # Index for dynamic relocations
-end
-
-"""
-    GlobalOffsetTable
-
-Mathematical model: GOT = {(symbol, address)_i}_{i=1}^n
-Global Offset Table for dynamic symbol resolution.
-
-Mathematical properties:
-- Each symbol has exactly one GOT entry: ∀s ∈ Symbols: |GOT[s]| = 1
-- GOT addresses are runtime-resolved: GOT[s] = resolve_runtime(s)
-"""
-mutable struct GlobalOffsetTable
-    entries::Dict{String, UInt64}     # symbol_name → GOT offset
-    base_address::UInt64              # Base address of GOT
-    size::UInt64                      # Total size of GOT
-end
-
-"""
-    ProcedureLinkageTable
-
-Mathematical model: PLT = {PLTEntry_i}_{i=1}^n
-Procedure Linkage Table for lazy symbol resolution.
-
-PLT structure:
-- PLT[0]: resolver stub  
-- PLT[i]: individual symbol stubs
-"""
-mutable struct ProcedureLinkageTable
-    entries::Vector{PLTEntry}         # PLT entries
-    base_address::UInt64              # Base address of PLT
-    size::UInt64                      # Total size of PLT
-    got::GlobalOffsetTable            # Associated GOT
-end
-
-"""
     DynamicLinker
 
-Mathematical model: S_Δ = ⟨O, Σ, M, α_base, α_next, T, GOT, PLT⟩
+Mathematical model: S_Δ = ⟨O, Σ, M, α_base, α_next, T, GOT, PLT, RelocationEngine, DynSection⟩
 Main dynamic linker state representing the complete linking context.
 
 State space components:
@@ -117,30 +64,40 @@ State space components:
 - base_address ∈ ℕ₆₄: α_base virtual memory base
 - next_address ∈ ℕ₆₄: α_next next available address
 - temp_files ∈ Vector{String}: T temporary file cleanup set
-- got ∈ GlobalOffsetTable: Global Offset Table for dynamic symbols
-- plt ∈ ProcedureLinkageTable: Procedure Linkage Table for lazy resolution
+- got ∈ GlobalOffsetTable: Enhanced GOT for dynamic symbols
+- plt ∈ ProcedureLinkageTable: Enhanced PLT for lazy resolution  
+- relocation_dispatcher ∈ RelocationDispatcher: Complete relocation engine
+- dynamic_section ∈ DynamicSection: Dynamic linking metadata (.dynamic section)
 """
 mutable struct DynamicLinker
-    loaded_objects::Vector{ElfFile}           # ↔ O = {o_i}
-    global_symbol_table::Dict{String, Symbol} # ↔ Σ: String → Symbol  
-    memory_regions::Vector{MemoryRegion}      # ↔ M = {m_j}
-    base_address::UInt64                      # ↔ α_base ∈ ℕ₆₄
-    next_address::UInt64                      # ↔ α_next ∈ ℕ₆₄
-    temp_files::Vector{String}                # ↔ T cleanup set
-    got::Union{GlobalOffsetTable, Nothing}   # ↔ GOT for dynamic symbols
-    plt::Union{ProcedureLinkageTable, Nothing} # ↔ PLT for lazy resolution
+    loaded_objects::Vector{ElfFile}                    # ↔ O = {o_i}
+    global_symbol_table::Dict{String, Symbol}          # ↔ Σ: String → Symbol  
+    memory_regions::Vector{MemoryRegion}               # ↔ M = {m_j}
+    base_address::UInt64                               # ↔ α_base ∈ ℕ₆₄
+    next_address::UInt64                               # ↔ α_next ∈ ℕ₆₄
+    temp_files::Vector{String}                         # ↔ T cleanup set
+    got::GlobalOffsetTable                             # ↔ Enhanced GOT structure
+    plt::ProcedureLinkageTable                        # ↔ Enhanced PLT structure  
+    relocation_dispatcher::RelocationDispatcher       # ↔ Complete relocation engine
+    dynamic_section::DynamicSection                   # ↔ Dynamic linking metadata
 end
 
 """
     DynamicLinker(base_address::UInt64 = UInt64(0x400000)) -> DynamicLinker
 
 Mathematical model: S_Δ initialization
-Create a new dynamic linker instance with initial state S_Δ = ⟨∅, ∅, ∅, α_base, α_base, ∅, ∅, ∅⟩
+Create a new dynamic linker instance with enhanced structures for production-ready linking.
 
 Base address α_base defaults to 0x400000 (standard Linux executable base).
 """
 function DynamicLinker(alpha_base::UInt64 = UInt64(0x400000))
-    # Initialize linker state: S_Δ = ⟨O, Σ, M, α_base, α_next, T, GOT, PLT⟩
+    # Initialize enhanced GOT and PLT structures
+    got = GlobalOffsetTable(alpha_base + 0x100000)  # GOT at base + 1MB  
+    plt = ProcedureLinkageTable(alpha_base + 0x110000)  # PLT at base + 1MB + 64KB
+    relocation_dispatcher = RelocationDispatcher()
+    dynamic_section = DynamicSection()
+    
+    # Initialize linker state: S_Δ = ⟨O, Σ, M, α_base, α_next, T, GOT, PLT, RelocationEngine, DynSection⟩
     return DynamicLinker(
         ElfFile[],                    # ↔ O = ∅ (empty object set)
         Dict{String, Symbol}(),       # ↔ Σ = ∅ (empty symbol table)
@@ -148,8 +105,10 @@ function DynamicLinker(alpha_base::UInt64 = UInt64(0x400000))
         alpha_base,                   # ↔ α_base virtual memory base
         alpha_base,                   # ↔ α_next = α_base initially
         String[],                     # ↔ T = ∅ (empty temp files)
-        nothing,                      # ↔ GOT = ∅ initially
-        nothing                       # ↔ PLT = ∅ initially
+        got,                          # ↔ Enhanced GOT structure
+        plt,                          # ↔ Enhanced PLT structure
+        relocation_dispatcher,        # ↔ Complete relocation engine
+        dynamic_section               # ↔ Dynamic section metadata
     )
 end
 
@@ -604,52 +563,105 @@ function allocate_memory_regions!(linker::DynamicLinker)
     linker.next_address = alpha_current
     
     # Allocate GOT memory region if present
-    if linker.got !== nothing
+    if !isempty(linker.got.entries)
         # Assign actual base address to GOT
         got_base = align_address(alpha_current, UInt64(8))  # 8-byte align
         linker.got.base_address = got_base
-        alpha_current = got_base + linker.got.size
+        got_size = UInt64(length(linker.got.entries) * 8)  # 8 bytes per entry
+        alpha_current = got_base + got_size
         
-        # Update GOT entries to use absolute addresses
-        for (symbol, relative_offset) in linker.got.entries
-            linker.got.entries[symbol] = got_base + relative_offset
-        end
-        
+        # GOT entries will be resolved at runtime by dynamic linker
         got_region = MemoryRegion(
-            zeros(UInt8, linker.got.size),     # Zero-initialized GOT entries
+            zeros(UInt8, got_size),     # Zero-initialized GOT entries
             got_base,
-            linker.got.size,
+            got_size,
             0x6  # R+W permissions (GOT is writable for runtime resolution)
         )
         push!(linker.memory_regions, got_region)
-        println("Allocated GOT memory region at 0x$(string(got_base, base=16)) ($(linker.got.size) bytes)")
+        println("Allocated GOT memory region at 0x$(string(got_base, base=16)) ($(got_size) bytes)")
     end
     
     # Allocate PLT memory region if present
-    if linker.plt !== nothing
+    if !isempty(linker.plt.entries)
         # Assign actual base address to PLT
         plt_base = align_address(alpha_current, UInt64(16))  # 16-byte align
         linker.plt.base_address = plt_base
-        alpha_current = plt_base + linker.plt.size
+        plt_size = UInt64(length(linker.plt.entries) * linker.plt.entry_size)
+        alpha_current = plt_base + plt_size
         
-        # Update PLT entries to use absolute addresses
-        for entry in linker.plt.entries
-            entry_plt_offset = plt_base + entry.plt_offset
-            # Note: entry.plt_offset was relative, now make it absolute
-            # Actually, PLTEntry is immutable, we'll create a new vector
+        # Create PLT code by concatenating all entries
+        plt_code = UInt8[]
+        for entry_code in linker.plt.entries
+            append!(plt_code, entry_code)
         end
         
-        # Create PLT stub code (simplified for now - would generate actual x86-64 code)
-        plt_code = zeros(UInt8, linker.plt.size)
+        # Ensure we have the correct size
+        while length(plt_code) < plt_size
+            push!(plt_code, 0x90)  # NOP padding
+        end
         
         plt_region = MemoryRegion(
             plt_code,
             plt_base,
-            linker.plt.size,
+            plt_size,
             0x5  # R+X permissions (PLT is executable)
         )
         push!(linker.memory_regions, plt_region)
-        println("Allocated PLT memory region at 0x$(string(plt_base, base=16)) ($(linker.plt.size) bytes)")
+        println("Allocated PLT memory region at 0x$(string(plt_base, base=16)) ($(plt_size) bytes)")
+    end
+    
+    # Allocate dynamic section memory region if present
+    if !isempty(linker.dynamic_section.entries)
+        # Dynamic section contains DynamicEntry structs (16 bytes each on 64-bit)
+        dynamic_base = align_address(alpha_current, UInt64(8))  # 8-byte align
+        dynamic_size = UInt64(length(linker.dynamic_section.entries) * 16)  # 16 bytes per entry
+        alpha_current = dynamic_base + dynamic_size
+        
+        # Serialize dynamic entries to binary format
+        dynamic_data = UInt8[]
+        for entry in linker.dynamic_section.entries
+            # Append tag (8 bytes) and value (8 bytes) in little-endian
+            append!(dynamic_data, reinterpret(UInt8, [entry.tag]))
+            append!(dynamic_data, reinterpret(UInt8, [entry.value]))
+        end
+        
+        dynamic_region = MemoryRegion(
+            dynamic_data,
+            dynamic_base,
+            dynamic_size,
+            0x4  # R-- permissions (dynamic section is read-only)
+        )
+        push!(linker.memory_regions, dynamic_region)
+        println("Allocated dynamic section at 0x$(string(dynamic_base, base=16)) ($(dynamic_size) bytes)")
+        
+        # Also allocate dynamic string table if present
+        if !isempty(linker.dynamic_section.string_table)
+            dynstr_base = align_address(alpha_current, UInt64(1))  # byte align
+            dynstr_size = UInt64(length(linker.dynamic_section.string_table))
+            alpha_current = dynstr_base + dynstr_size
+            
+            dynstr_region = MemoryRegion(
+                copy(linker.dynamic_section.string_table),
+                dynstr_base,
+                dynstr_size,
+                0x4  # R-- permissions (string table is read-only)
+            )
+            push!(linker.memory_regions, dynstr_region)
+            println("Allocated dynamic string table at 0x$(string(dynstr_base, base=16)) ($(dynstr_size) bytes)")
+            
+            # Update DT_STRTAB entry with actual address
+            for i in 1:length(linker.dynamic_section.entries)
+                if linker.dynamic_section.entries[i].tag == DT_STRTAB
+                    linker.dynamic_section.entries[i] = DynamicEntry(DT_STRTAB, dynstr_base)
+                    # Also update the serialized data
+                    offset = (i - 1) * 16 + 8  # Skip to value field
+                    for j in 1:8
+                        dynamic_region.data[offset + j] = UInt8((dynstr_base >> ((j - 1) * 8)) & 0xff)
+                    end
+                    break
+                end
+            end
+        end
     end
     
     # Update final next_address
@@ -733,134 +745,16 @@ end
 """
     perform_relocations!(linker::DynamicLinker)
 
-Perform relocations for all loaded objects.
+Mathematical model: ∀r ∈ Relocations: apply_relocation(r, linker_state)
+Perform relocations for all loaded objects using enhanced relocation engine.
 """
 function perform_relocations!(linker::DynamicLinker)
     for elf_file in linker.loaded_objects
         for relocation in elf_file.relocations
-            perform_relocation!(linker, elf_file, relocation)
-        end
-    end
-end
-
-"""
-    perform_relocation!(linker::DynamicLinker, elf_file::ElfFile, relocation::RelocationEntry)
-
-Perform a single relocation.
-"""
-function perform_relocation!(linker::DynamicLinker, elf_file::ElfFile, relocation::RelocationEntry)
-    sym_index = elf64_r_sym(relocation.info)
-    rel_type = elf64_r_type(relocation.info)
-    
-    # Get symbol
-    if sym_index == 0
-        symbol_value = 0
-        symbol_name = ""
-    elseif sym_index <= length(elf_file.symbols)
-        # Convert from 0-based ELF indexing to 1-based Julia indexing
-        julia_index = sym_index + 1
-        if julia_index <= length(elf_file.symbols)
-            symbol = elf_file.symbols[julia_index]
-            symbol_name = get_string_from_table(elf_file.symbol_string_table, symbol.name)
-        else
-            error("Invalid symbol index after conversion: $sym_index -> $julia_index")
-        end
-        
-        if !isempty(symbol_name) && haskey(linker.global_symbol_table, symbol_name)
-            global_symbol = linker.global_symbol_table[symbol_name]
-            if global_symbol.defined
-                symbol_value = global_symbol.value
-            else
-                println("Warning: Undefined symbol: $symbol_name")
-                symbol_value = 0
+            if !apply_relocation!(linker.relocation_dispatcher, relocation, linker)
+                error("Failed to apply relocation of type $(elf64_r_type(relocation.info))")
             end
-        elseif !isempty(symbol_name)
-            # Handle undefined reference
-            println("Warning: Undefined reference to symbol: $symbol_name")
-            symbol_value = 0  # Use 0 for undefined symbols for now
-        else
-            symbol_value = symbol.value  # Use symbol value as-is for local symbols
         end
-    else
-        error("Invalid symbol index: $sym_index")
-    end
-    
-    # For this simplified implementation, assume most relocations are in .text section
-    # Find the .text section's memory region
-    text_region = nothing
-    for region in linker.memory_regions
-        # Check if this region likely corresponds to .text (first executable region)
-        if region.permissions & 0x4 != 0  # Executable
-            text_region = region
-            break
-        end
-    end
-    
-    if text_region === nothing
-        println("Warning: Could not find text region for relocation")
-        return
-    end
-    
-    # Perform relocation based on type
-    if rel_type == R_X86_64_64
-        # Direct 64-bit address: S + A
-        value = Int64(symbol_value) + relocation.addend
-        apply_relocation_to_region!(text_region, relocation.offset, value, 8)
-        println("R_X86_64_64 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")
-        
-    elseif rel_type == R_X86_64_PC32
-        # PC-relative 32-bit: S + A - P
-        target_addr = text_region.base_address + relocation.offset + 4  # P + 4 for next instruction
-        value = Int64(symbol_value) + relocation.addend - Int64(target_addr)
-        apply_relocation_to_region!(text_region, relocation.offset, value, 4)
-        println("R_X86_64_PC32 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")
-        
-    elseif rel_type == R_X86_64_PLT32
-        # PLT 32-bit address (for static linking, treat like PC32): L + A - P
-        # For call instructions, the target address should be the address of the next instruction
-        target_addr = text_region.base_address + relocation.offset + 4  # P + 4 for next instruction
-        value = Int64(symbol_value) + relocation.addend - Int64(target_addr)
-        apply_relocation_to_region!(text_region, relocation.offset, value, 4)
-        println("R_X86_64_PLT32 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")
-        
-    elseif rel_type == R_X86_64_32
-        # Direct 32-bit zero extended: S + A (truncated to 32 bits)
-        value = Int64(symbol_value) + relocation.addend
-        if value > typemax(UInt32) || value < 0
-            println("Warning: R_X86_64_32 relocation value 0x$(string(value, base=16)) truncated to 32-bit")
-        end
-        apply_relocation_to_region!(text_region, relocation.offset, Int64(value & 0xffffffff), 4)
-        println("R_X86_64_32 relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value & 0xffffffff, base=16))")
-        
-    elseif rel_type == R_X86_64_32S
-        # Direct 32-bit sign extended: S + A (sign-extended to 64 bits)
-        value = Int64(symbol_value) + relocation.addend
-        if value > typemax(Int32) || value < typemin(Int32)
-            println("Warning: R_X86_64_32S relocation value 0x$(string(value, base=16)) does not fit in signed 32-bit")
-        end
-        apply_relocation_to_region!(text_region, relocation.offset, Int64(Int32(value)), 4)
-        println("R_X86_64_32S relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(Int32(value), base=16))")
-        
-    elseif rel_type == R_X86_64_RELATIVE
-        # Adjust by program base: B + A (where B is the base address)
-        value = Int64(text_region.base_address) + relocation.addend
-        apply_relocation_to_region!(text_region, relocation.offset, value, 8)
-        println("R_X86_64_RELATIVE relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16))")
-        
-    elseif rel_type == R_X86_64_GOTPCREL
-        # PC-relative reference to GOT entry: G + GOT + A - P
-        # For now, without proper GOT implementation, treat as direct symbol reference
-        target_addr = text_region.base_address + relocation.offset + 4  # P + 4 for next instruction
-        value = Int64(symbol_value) + relocation.addend - Int64(target_addr)
-        apply_relocation_to_region!(text_region, relocation.offset, value, 4)
-        println("R_X86_64_GOTPCREL relocation at offset 0x$(string(relocation.offset, base=16)): 0x$(string(value, base=16)) (simplified - no GOT)")
-        
-    elseif rel_type == R_X86_64_NONE
-        # No relocation - skip
-        println("R_X86_64_NONE relocation at offset 0x$(string(relocation.offset, base=16)): skipped")
-        
-    else
-        println("Unsupported relocation type: $rel_type")
     end
 end
 
@@ -963,7 +857,12 @@ function link_objects(filenames::Vector{String}; base_address::UInt64 = UInt64(0
     # Setup dynamic linking infrastructure (GOT/PLT) for external symbols
     dynamic_symbols = setup_dynamic_linking!(linker)
     
-    # Allocate memory regions (now includes GOT/PLT if created)
+    # Setup dynamic section with required library information
+    if !isempty(dynamic_symbols) || !isempty(library_names)
+        setup_dynamic_section!(linker, library_names)
+    end
+    
+    # Allocate memory regions (now includes GOT/PLT/Dynamic section if created)
     allocate_memory_regions!(linker)
     
     # Perform relocations
@@ -1104,22 +1003,14 @@ function create_got!(linker::DynamicLinker, dynamic_symbols::Vector{String})
         return  # No dynamic symbols, no GOT needed
     end
     
-    # Calculate GOT size: 8 bytes per entry (64-bit pointers)
-    entry_size = 8
-    got_size = UInt64(length(dynamic_symbols) * entry_size)
-    
-    # Don't allocate GOT address yet - this will be done during memory allocation
-    # Just store the size for now
-    got_entries = Dict{String, UInt64}()
+    # Add symbols to the existing enhanced GOT structure
     for (i, symbol) in enumerate(dynamic_symbols)
-        offset = UInt64((i - 1) * entry_size)  # 0-based offset within GOT
-        got_entries[symbol] = offset  # Store relative offset, not absolute address
+        # Add entry to GOT (entries are indices, base address set later)
+        push!(linker.got.entries, 0x0)  # Will be resolved at runtime
+        linker.got.symbol_indices[symbol] = length(linker.got.entries)
     end
     
-    # Create GOT structure without absolute base address yet
-    linker.got = GlobalOffsetTable(got_entries, UInt64(0), got_size)
-    
-    println("Prepared GOT with $(length(dynamic_symbols)) entries ($(got_size) bytes)")
+    println("Prepared GOT with $(length(dynamic_symbols)) entries ($(length(linker.got.entries) * 8) bytes)")
 end
 
 """
@@ -1136,32 +1027,29 @@ jmp PLT[0]      # 5 bytes (16 bytes total per entry)
 ```
 """
 function create_plt!(linker::DynamicLinker, dynamic_symbols::Vector{String})
-    if isempty(dynamic_symbols) || linker.got === nothing
-        return  # No dynamic symbols or GOT, no PLT needed
+    if isempty(dynamic_symbols)
+        return  # No dynamic symbols, no PLT needed
     end
     
-    # PLT entry size: 16 bytes per entry (x86-64 standard)
-    plt_entry_size = 16
-    
-    # PLT[0] is resolver stub: 16 bytes
-    # PLT[i] are symbol stubs: 16 bytes each
-    total_entries = length(dynamic_symbols) + 1  # +1 for PLT[0]
-    plt_size = UInt64(total_entries * plt_entry_size)
-    
-    # Create PLT entries with relative offsets
-    plt_entries = PLTEntry[]
+    # Add symbols to the existing enhanced PLT structure
     for (i, symbol) in enumerate(dynamic_symbols)
-        got_offset = linker.got.entries[symbol]  # This is relative offset
-        plt_offset = UInt64(i * plt_entry_size)  # Skip PLT[0], relative offset
+        # Create PLT entry for this symbol
+        got_index = get(linker.got.symbol_indices, symbol, 0)
+        if got_index == 0
+            @warn "Symbol $symbol not found in GOT, skipping PLT entry"
+            continue
+        end
+        
+        got_offset = UInt32(got_index * 8)  # Each GOT entry is 8 bytes  
         reloc_index = UInt32(i - 1)  # 0-based relocation index
         
-        push!(plt_entries, PLTEntry(symbol, got_offset, plt_offset, reloc_index))
+        # Create PLT entry with proper x86-64 code
+        plt_entry = create_plt_entry(got_offset, reloc_index)
+        push!(linker.plt.entries, plt_entry.code)
+        linker.plt.symbol_indices[symbol] = length(linker.plt.entries)
     end
     
-    # Create PLT structure without absolute base address yet
-    linker.plt = ProcedureLinkageTable(plt_entries, UInt64(0), plt_size, linker.got)
-    
-    println("Prepared PLT with $(length(dynamic_symbols)) entries ($(plt_size) bytes)")
+    println("Prepared PLT with $(length(dynamic_symbols)) entries ($(length(linker.plt.entries) * 16) bytes)")
 end
 
 """
@@ -1191,4 +1079,27 @@ function setup_dynamic_linking!(linker::DynamicLinker)
     end
     
     return dynamic_symbols
+end
+
+"""
+    setup_dynamic_section!(linker::DynamicLinker, required_libraries::Vector{String})
+
+Mathematical model: generate_dynamic_metadata: LinkerState → DynamicSection
+Generate .dynamic section entries for runtime linking information.
+"""
+function setup_dynamic_section!(linker::DynamicLinker, required_libraries::Vector{String} = String[])
+    # Add required library dependencies
+    for lib in required_libraries
+        add_needed_library!(linker.dynamic_section, lib)
+    end
+    
+    # Add standard C library if not explicitly specified and system libraries are enabled
+    if !any(lib -> contains(lib, "libc"), required_libraries)
+        add_needed_library!(linker.dynamic_section, "libc.so.6")
+    end
+    
+    # Finalize the dynamic section with all required entries
+    finalize_dynamic_section!(linker.dynamic_section, linker)
+    
+    println("Generated dynamic section with $(length(linker.dynamic_section.entries)) entries")
 end

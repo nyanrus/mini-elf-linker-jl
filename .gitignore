@@ -8,3 +8,12 @@ test_hello*
 simple_exit_exe
 inline_hello_exe
 /tmp/*
+
+# Test artifacts from production readiness implementation
+test_enhanced_*
+test_dynamic_*
+test_program_*
+test_final_*
+test_cleaned_*
+production_test
+test_output
