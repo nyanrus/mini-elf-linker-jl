@@ -69,7 +69,7 @@ Components:
 
 ### 1. ELF Parsing Mathematical Model
 
-**Specification**: [Native Parsing Specification](specifications/native_parsing_spec.md)
+**Specification**: [Native Parsing Specification](specifications/native_parsing_spec.typ)
 
 **Core Function**:
 ```math
@@ -89,7 +89,7 @@ Components:
 
 ### 2. Symbol Resolution Mathematical Model
 
-**Specification**: [Symbol Resolution Specification](specifications/symbol_resolution_spec.md)
+**Specification**: [Symbol Resolution Specification](specifications/symbol_resolution_spec.typ)
 
 **Resolution Function**:
 ```math
@@ -109,7 +109,7 @@ Components:
 
 ### 3. Memory Allocation Mathematical Model
 
-**Specification**: [Memory Allocation Specification](specifications/memory_allocation_spec.md)
+**Specification**: [Memory Allocation Specification](specifications/memory_allocation_spec.typ)
 
 **Allocation Function**:
 ```math
@@ -133,7 +133,7 @@ addr_{i+1} &= \text{align}(addr_i + size_i, alignment_{i+1})
 
 ### 4. Relocation Processing Mathematical Model
 
-**Specification**: [Relocation Engine Specification](specifications/relocation_engine_spec.md)
+**Specification**: [Relocation Engine Specification](specifications/relocation_engine_spec.typ)
 
 **Relocation Dispatch Function**:
 ```math
@@ -155,7 +155,7 @@ addr_{i+1} &= \text{align}(addr_i + size_i, alignment_{i+1})
 
 ### 5. ELF Generation Mathematical Model
 
-**Specification**: [ELF Writer Specification](specifications/elf_writer_spec.md)
+**Specification**: [ELF Writer Specification](specifications/elf_writer_spec.typ)
 
 **Generation Function**:
 ```math
@@ -314,16 +314,16 @@ S_{total} = O(\text{max}(input\_files, symbol\_table, memory\_regions, relocatio
 
 This mathematical framework is implemented across the following specifications:
 
-1. **[Core Processes](specifications/core_processes.md)** - Main mathematical framework
-2. **[Symbol Resolution](specifications/symbol_resolution_spec.md)** - Symbol resolution algorithms
-3. **[Memory Allocation](specifications/memory_allocation_spec.md)** - Memory layout mathematics
-4. **[Relocation Engine](specifications/relocation_engine_spec.md)** - Relocation processing
-5. **[ELF Writer](specifications/elf_writer_spec.md)** - Binary generation
-6. **[Native Parsing](specifications/native_parsing_spec.md)** - ELF parsing algorithms
-7. **[Data Structures](specifications/data_structures.md)** - Mathematical data representations
-8. **[CLI Interface](specifications/cli_spec.md)** - Command-line interface mathematics
-9. **[Library Support](specifications/library_support_spec.md)** - Library resolution mathematics
-10. **[Dynamic Linker](specifications/dynamic_linker_spec.md)** - Dynamic linking mathematics
+1. **[Core Processes](specifications/core_processes.typ)** - Main mathematical framework
+2. **[Symbol Resolution](specifications/symbol_resolution_spec.typ)** - Symbol resolution algorithms
+3. **[Memory Allocation](specifications/memory_allocation_spec.typ)** - Memory layout mathematics
+4. **[Relocation Engine](specifications/relocation_engine_spec.typ)** - Relocation processing
+5. **[ELF Writer](specifications/elf_writer_spec.typ)** - Binary generation
+6. **[Native Parsing](specifications/native_parsing_spec.typ)** - ELF parsing algorithms
+7. **[Data Structures](specifications/data_structures.typ)** - Mathematical data representations
+8. **[CLI Interface](specifications/cli_spec.typ)** - Command-line interface mathematics
+9. **[Library Support](specifications/library_support_spec.typ)** - Library resolution mathematics
+10. **[Dynamic Linker](specifications/dynamic_linker_spec.typ)** - Dynamic linking mathematics
 
 Each specification provides:
 - Mathematical models for algorithmic components

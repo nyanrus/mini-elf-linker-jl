@@ -1,12 +1,12 @@
-# Library Support Specification
+= Library Support Specification
 
-## Overview
+== Overview
 
 The MiniElfLinker supports linking with system libraries to resolve external symbols. This specification follows the Mathematical-Driven AI Development methodology: using Julia directly for non-algorithmic components (configuration, data structures) and mathematical notation for algorithmic components (library search, symbol resolution).
 
-## Non-Algorithmic Components (Julia Direct Documentation)
+== Non-Algorithmic Components (Julia Direct Documentation)
 
-### Library Type Classification
+=== Library Type Classification
 ```julia
 """
 LibraryType enumeration for classifying different library formats and implementations.
@@ -21,7 +21,7 @@ Non-algorithmic: static type definitions for library categorization.
 end
 ```
 
-### Library Information Structure
+=== Library Information Structure
 ```julia
 """
 LibraryInfo contains metadata about discovered library files.
@@ -42,7 +42,7 @@ struct LibraryInfo
 end
 ```
 
-### Default Search Path Configuration
+=== Default Search Path Configuration
 ```julia
 """
 get_default_library_search_paths provides standard system library locations.
@@ -63,7 +63,7 @@ function get_default_library_search_paths()::Vector{String}
 end
 ```
 
-### Library File Recognition
+=== Library File Recognition
 ```julia
 """
 is_library_file determines if a filename represents a linkable library.
@@ -108,59 +108,59 @@ function extract_library_name(filename::String)::String
 end
 ```
 
-## Algorithmic Components (Mathematical Analysis)
+== Algorithmic Components (Mathematical Analysis)
 
-### Library Discovery Algorithm
+=== Library Discovery Algorithm
 
-**Mathematical Model**: Library discovery searches through a path space to find libraries matching specified criteria.
+_Mathematical Model_: Library discovery searches through a path space to find libraries matching specified criteria.
 
-```math
+$
 \text{Let } \mathcal{P} = \{p_1, p_2, \ldots, p_k\} \text{ be the set of search paths}
-```
+$
 
-```math
+$
 \text{Let } \mathcal{N} = \{n_1, n_2, \ldots, n_m\} \text{ be requested library names}
-```
+$
 
-```math
+$
 \text{Let } \mathcal{F}_p = \{\text{files in path } p\} \text{ for each path } p \in \mathcal{P}
-```
+$
 
-**Discovery Function**:
-```math
+_Discovery Function_:
+$
 \mathcal{D}_{discover}: \mathcal{P} \times \mathcal{N} \to \mathcal{L}_{libraries}
-```
+$
 
-**Path Union with Precedence**:
-```math
+_Path Union with Precedence_:
+$
 \mathcal{P}_{complete} = \mathcal{P}_{custom} \cup \mathcal{P}_{default}
-```
+$
 
-**Library Discovery Operation**:
-```math
+_Library Discovery Operation_:
+$
 \mathcal{L}_{found} = \bigcup_{p \in \mathcal{P}_{complete}} \{l \in \mathcal{F}_p : \text{is\_library}(l) \land \text{matches\_filter}(l, \mathcal{N})\}
-```
+$
 
-**Filter Predicate**:
-```math
+_Filter Predicate_:
+$
 \text{matches\_filter}(l, \mathcal{N}) = \begin{cases}
 \text{true} & \text{if } \mathcal{N} = \emptyset \\
 \text{extract\_name}(l) \in \mathcal{N} & \text{otherwise}
 \end{cases}
-```
+$
 
-**Complexity Analysis**:
-```math
+_Complexity Analysis_:
+$
 T_{discovery}(|\mathcal{P}|, |\mathcal{F}|, |\mathcal{N}|) = O(|\mathcal{P}| \times |\mathcal{F}| \times |\mathcal{N}|)
-```
+$
 
-**Optimization Potential**:
-```math
+_Optimization Potential_:
+$
 T_{optimized}(|\mathcal{P}|, |\mathcal{F}|, |\mathcal{N}|) = O(|\mathcal{P}| \times |\mathcal{F}| + |\mathcal{N}| \log |\mathcal{N}|)
-```
+$
 using hash sets for name lookup.
 
-**Implementation with Mathematical Correspondence**:
+_Implementation with Mathematical Correspondence_:
 ```julia
 """
 Mathematical model: 𝒟_discover: 𝒫 × 𝒩 → ℒ_libraries
@@ -211,51 +211,51 @@ function 𝒟_discover_libraries(𝒫_search_paths::Vector{String},
 end
 ```
 
-### Symbol Resolution Algorithm
+=== Symbol Resolution Algorithm
 
-**Mathematical Model**: Symbol resolution maps undefined symbols to their definitions in library symbol spaces.
+_Mathematical Model_: Symbol resolution maps undefined symbols to their definitions in library symbol spaces.
 
-```math
+$
 \text{Let } \mathcal{U} = \{u_1, u_2, \ldots, u_n\} \text{ be undefined symbols}
-```
+$
 
-```math
+$
 \text{Let } \mathcal{S}_l = \{\text{symbols in library } l\} \text{ for each library } l
-```
+$
 
-```math
+$
 \text{Let } \mathcal{S}_{global} = \bigcup_{l \in \mathcal{L}} \mathcal{S}_l \text{ be the global symbol space}
-```
+$
 
-**Resolution Function**:
-```math
+_Resolution Function_:
+$
 \mathcal{R}_{resolve}: \mathcal{U} \times \mathcal{S}_{global} \to (\mathcal{U}_{resolved}, \mathcal{U}_{unresolved})
-```
+$
 
-**Symbol Lookup Operation**:
-```math
+_Symbol Lookup Operation_:
+$
 \text{lookup}(u, \mathcal{S}_{global}) = \begin{cases}
 s & \text{if } \exists s \in \mathcal{S}_{global}: s.name = u \land s.binding = \text{STB\_GLOBAL} \\
 \perp & \text{otherwise}
 \end{cases}
-```
+$
 
-**Resolution Algorithm**:
-```math
+_Resolution Algorithm_:
+$
 \mathcal{R}_{resolve}(\mathcal{U}, \mathcal{S}_{global}) = \left(\{u \in \mathcal{U} : \text{lookup}(u, \mathcal{S}_{global}) \neq \perp\}, \{u \in \mathcal{U} : \text{lookup}(u, \mathcal{S}_{global}) = \perp\}\right)
-```
+$
 
-**Complexity Analysis**:
-```math
+_Complexity Analysis_:
+$
 T_{resolution}(|\mathcal{U}|, |\mathcal{S}|) = O(|\mathcal{U}| \times |\mathcal{S}|) \text{ naive search}
-```
+$
 
-**Optimization Potential**:
-```math
+_Optimization Potential_:
+$
 T_{hash\_resolution}(|\mathcal{U}|, |\mathcal{S}|) = O(|\mathcal{U}| + |\mathcal{S}|) \text{ using hash tables}
-```
+$
 
-**Implementation**:
+_Implementation_:
 ```julia
 """
 Mathematical model: ℛ_resolve: 𝒰 × 𝒮_global → (𝒰_resolved, 𝒰_unresolved)
@@ -291,9 +291,9 @@ function ℛ_resolve_symbols_with_libraries!(linker::DynamicLinker,
 end
 ```
 
-## Non-Algorithmic Library Analysis (Julia Direct Documentation)
+== Non-Algorithmic Library Analysis (Julia Direct Documentation)
 
-### File Type Detection
+=== File Type Detection
 ```julia
 """
 detect_library_type identifies the specific type of library file.
@@ -319,7 +319,7 @@ function detect_library_type(filepath::String)::LibraryType
 end
 ```
 
-### C Library Implementation Detection
+=== C Library Implementation Detection
 ```julia
 """
 detect_libc_type determines the specific C library implementation.
@@ -352,7 +352,7 @@ function detect_libc_type(library_path::String)::LibraryType
 end
 ```
 
-### Library Caching System
+=== Library Caching System
 ```julia
 """
 LibraryCache manages cached library discovery results.
@@ -390,9 +390,9 @@ function cache_libraries!(search_paths::Vector{String}, libraries::Vector{Librar
 end
 ```
 
-## Integration with Mathematical Linker Core
+== Integration with Mathematical Linker Core
 
-### Interface Bridge Function
+=== Interface Bridge Function
 ```julia
 """
 integrate_library_support bridges library discovery to mathematical linking algorithms.
@@ -417,9 +417,9 @@ function integrate_library_support!(linker::DynamicLinker)
 end
 ```
 
-## Library Analysis
+== Library Analysis
 
-### File Type Detection
+=== File Type Detection
 ```julia
 function detect_library_type(filepath::String)::LibraryType
     try
@@ -439,7 +439,7 @@ function detect_library_type(filepath::String)::LibraryType
 end
 ```
 
-### C Library Detection
+=== C Library Detection
 ```julia
 function detect_libc_type(library_path::String)::LibraryType
     try
@@ -469,9 +469,9 @@ function detect_libc_type(library_path::String)::LibraryType
 end
 ```
 
-## Symbol Resolution
+== Symbol Resolution
 
-### System Library Integration
+=== System Library Integration
 ```julia
 function resolve_unresolved_symbols!(linker::DynamicLinker)::Vector{String}
     unresolved = String[]
@@ -505,7 +505,7 @@ function resolve_unresolved_symbols!(linker::DynamicLinker)::Vector{String}
 end
 ```
 
-### Symbol Extraction from Libraries
+=== Symbol Extraction from Libraries
 ```julia
 function extract_library_symbols(library_path::String)::Vector{String}
     if endswith(library_path, ".a")
@@ -519,9 +519,9 @@ function extract_library_symbols(library_path::String)::Vector{String}
 end
 ```
 
-## Standard C Library Support
+== Standard C Library Support
 
-### Finding Default C Library
+=== Finding Default C Library
 ```julia
 function find_default_libc()::Union{LibraryInfo, Nothing}
     search_paths = get_default_library_search_paths()
@@ -548,7 +548,7 @@ function find_default_libc()::Union{LibraryInfo, Nothing}
 end
 ```
 
-### C Runtime Objects
+=== C Runtime Objects
 ```julia
 function find_crt_objects()::Dict{String, String}
     crt_objects = Dict{String, String}()
@@ -573,9 +573,9 @@ function find_crt_objects()::Dict{String, String}
 end
 ```
 
-## Archive Processing
+== Archive Processing
 
-### Static Library Symbol Extraction
+=== Static Library Symbol Extraction
 Static libraries (.a files) are archives containing multiple object files. We need to extract symbols from all contained objects.
 
 ```julia
@@ -604,9 +604,9 @@ function extract_archive_symbols_native(archive_path::String)::Vector{String}
 end
 ```
 
-## Library Search Optimization
+== Library Search Optimization
 
-### Library Caching
+=== Library Caching
 ```julia
 mutable struct LibraryCache
     libraries::Dict{String, Vector{LibraryInfo}}
@@ -635,7 +635,7 @@ function get_cached_libraries(search_paths::Vector{String})::Vector{LibraryInfo}
 end
 ```
 
-### Parallel Library Scanning
+=== Parallel Library Scanning
 ```julia
 using Base.Threads
 
@@ -656,9 +656,9 @@ function find_libraries_parallel(search_paths::Vector{String})::Vector{LibraryIn
 end
 ```
 
-## Error Handling
+== Error Handling
 
-### Library Loading Errors
+=== Library Loading Errors
 ```julia
 struct LibraryError <: Exception
     message::String
@@ -675,7 +675,7 @@ function safe_library_analysis(library_path::String)::Union{LibraryInfo, Library
 end
 ```
 
-### Symbol Resolution Failures
+=== Symbol Resolution Failures
 ```julia
 function report_unresolved_symbols(symbols::Vector{String})
     if !isempty(symbols)
@@ -687,51 +687,51 @@ function report_unresolved_symbols(symbols::Vector{String})
 end
 ```
 
-## Configuration Options
+== Configuration Options
 
-### Environment Variables
+=== Environment Variables
 - `LD_LIBRARY_PATH`: Runtime library search paths
 - `LIBRARY_PATH`: Compile-time library search paths  
 - `LD_PRELOAD`: Libraries to preload
 
-### Search Path Precedence
+=== Search Path Precedence
 1. Paths specified with `-L` option
 2. `LIBRARY_PATH` environment variable
 3. Default system paths
 4. `LD_LIBRARY_PATH` (runtime only)
 
-## Performance Considerations
+== Performance Considerations
 
-### Symbol Lookup Optimization
+=== Symbol Lookup Optimization
 - Cache symbol tables for frequently used libraries
 - Use hash sets for O(1) symbol membership testing
 - Lazy symbol extraction (extract only when needed)
 
-### File System Optimization
+=== File System Optimization
 - Cache directory listings to avoid repeated `readdir()` calls
 - Use `stat()` to check file modifications for cache invalidation
 - Parallel directory scanning for large library collections
 
-## Integration Examples
+== Integration Examples
 
-### Basic Library Linking
+=== Basic Library Linking
 ```julia
-# Find and link with C library
+= Find and link with C library
 libraries = find_libraries(["/usr/lib"], ["c"])
 resolve_symbols_with_libraries(linker, libraries)
 ```
 
-### Custom Library Search
+=== Custom Library Search
 ```julia  
-# Add custom search paths and libraries
+= Add custom search paths and libraries
 custom_paths = ["/opt/mylib/lib", "/home/user/libs"]
 custom_libs = ["mymath", "myutil"]
 libraries = find_libraries(custom_paths, custom_libs)
 ```
 
-### System Integration
+=== System Integration
 ```julia
-# Full system library integration
+= Full system library integration
 function link_with_system_libraries!(linker::DynamicLinker)
     # Find system C library
     libc = find_default_libc()
@@ -747,38 +747,38 @@ function link_with_system_libraries!(linker::DynamicLinker)
 end
 ```
 
-### Library Type Detection → `detect_library_type` function
+=== Library Type Detection → `detect_library_type` function
 
-```math
+$
 detect\_type: String \to LibraryType
-```
+$
 
-**Mathematical classification**:
-```math
+_Mathematical classification_:
+$
 classify(library\_path) = \begin{cases}
 STATIC & \text{if } filename \text{ ends with } ".a" \\
 GLIBC & \text{if } "libc.so" \in filename \land detect\_libc\_type(path) = GLIBC \\
 MUSL & \text{if } "libc.so" \in filename \land detect\_libc\_type(path) = MUSL \\
-SHARED & \text{if } filename \text{ matches } "\.so(\.\d+)*$" \\
+SHARED & \text{if } filename \text{ matches } "\.so(\.\d+)_$" \\
 UNKNOWN & \text{otherwise}
 \end{cases}
-```
+$
 
-### Extended Library Discovery → `find_libraries` function
+=== Extended Library Discovery → `find_libraries` function
 
-```math
+$
 find\_libraries: \mathcal{P} \times \mathcal{N} \to \mathcal{L}
-```
+$
 
-**Set-theoretic operation**: Multi-path traversal with filtering
+_Set-theoretic operation_: Multi-path traversal with filtering
 
-```math
+$
 library\_search = \bigcup_{path \in unified\_paths} \{f \in files(path) : matches\_library\_pattern(f) \land name\_filter(f)\}
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: find_libraries: P × N → L
+= Mathematical model: find_libraries: P × N → L
 function find_libraries(search_paths::Vector{String} = String[]; library_names::Vector{String} = String[])
     # Implementation of: custom_paths ∪ default_paths with precedence preservation
     all_search_paths = vcat(search_paths, get_default_library_search_paths())
@@ -788,29 +788,29 @@ function find_libraries(search_paths::Vector{String} = String[]; library_names::
 end
 ```
 
-### Library Pattern Matching → `matches_library_pattern` function
+=== Library Pattern Matching → `matches_library_pattern` function
 
-```math
+$
 matches\_pattern: String \to Boolean
-```
+$
 
-**Pattern recognition**:
-```math
+_Pattern recognition_:
+$
 matches(filename) = \begin{cases}
 true & \text{if } filename \text{ starts with } "lib" \land filename \text{ ends with } ".a" \\
-true & \text{if } filename \text{ starts with } "lib" \land filename \text{ matches } "\.so(\.\d+)*$" \\
+true & \text{if } filename \text{ starts with } "lib" \land filename \text{ matches } "\.so(\.\d+)_$" \\
 false & \text{otherwise}
 \end{cases}
-```
+$
 
-### Symbol Extraction → `extract_library_symbols` function
+=== Symbol Extraction → `extract_library_symbols` function
 
-```math
+$
 extract\_symbols: String \to \mathcal{S}
-```
+$
 
-**Library-specific symbol mapping**:
-```math
+_Library-specific symbol mapping_:
+$
 symbol\_set(library\_name) = \begin{cases}
 \{printf, malloc, strlen, ...\} & \text{if } library\_name = "c" \\
 \{sin, cos, exp, sqrt, ...\} & \text{if } library\_name = "m" \\
@@ -818,93 +818,93 @@ symbol\_set(library\_name) = \begin{cases}
 \{dlopen, dlclose, dlsym, ...\} & \text{if } library\_name = "dl" \\
 \emptyset & \text{otherwise}
 \end{cases}
-```
+$
 
-### Backward Compatibility → `find_system_libraries` function
+=== Backward Compatibility → `find_system_libraries` function
 
-```math
+$
 find\_system\_libraries: \{\} \to List(LibraryInfo)
-```
+$
 
-**Specialized libc discovery**:
-```math
+_Specialized libc discovery_:
+$
 system\_libraries = \{lib \in find\_libraries(\{\}, \{"c"\}) : lib.type \in \{GLIBC, MUSL\}\}
-```
+$
 
-## Complexity Analysis
+== Complexity Analysis
 
-```math
+$
 \begin{align}
 T_{library\_detection}(f) &= O(f) \quad \text{– File pattern matching and type detection} \\
 T_{path\_discovery}(p,f) &= O(p \cdot f) \quad \text{– Multi-path directory traversal} \\
 T_{symbol\_resolution}(s,l) &= O(s \cdot l) \quad \text{– Symbol lookup across libraries} \\
 T_{total\_search}(p,f,s,l) &= O(p \cdot f + s \cdot l) \quad \text{– Combined search and resolution}
 \end{align}
-```
+$
 
-**Critical path**: Library discovery with O(p·f) path traversal operations.
+_Critical path_: Library discovery with O(p·f) path traversal operations.
 
-## Transformation Pipeline
+== Transformation Pipeline
 
-**Library discovery pipeline**:
-```math
+_Library discovery pipeline_:
+$
 search\_paths \xrightarrow{filter} valid\_paths \xrightarrow{scan} all\_files \xrightarrow{match} library\_files \xrightarrow{classify} typed\_libraries
-```
+$
 
-**Symbol resolution pipeline**:
-```math
+_Symbol resolution pipeline_:
+$
 unresolved\_symbols \xrightarrow{lookup} candidate\_libraries \xrightarrow{match} providing\_library \xrightarrow{resolve} resolved\_symbols
-```
+$
 
-## Set-Theoretic Operations
+== Set-Theoretic Operations
 
-**Library path union with precedence**:
-```math
+_Library path union with precedence_:
+$
 all\_search\_paths = custom\_paths \cup default\_paths \text{ (preserving order)}
-```
+$
 
-**Symbol availability across libraries**:
-```math
+_Symbol availability across libraries_:
+$
 available\_symbols = \bigcup_{lib \in discovered\_libraries} lib.symbols
-```
+$
 
-**Library filtering by name**:
-```math
+_Library filtering by name_:
+$
 filtered\_libraries = \{lib \in all\_libraries : lib.name \in requested\_names\}
-```
+$
 
-**Resolution status partitioning**:
-```math
+_Resolution status partitioning_:
+$
 resolved\_symbols = \{s \in symbols : s.resolved = true\}
 unresolved\_symbols = \{s \in symbols : s.resolved = false\}
-```
+$
 
-## Invariant Preservation
+== Invariant Preservation
 
-```math
+$
 \text{Library type consistency: }
 \forall lib: classify(lib) \in \{GLIBC, MUSL, STATIC, SHARED, UNKNOWN\}
-```
+$
 
-```math
+$
 \text{Search path precedence: }
 \forall p_1, p_2: p_1 \text{ before } p_2 \text{ in input} \implies p_1 \text{ searched before } p_2
-```
+$
 
-```math
+$
 \text{Symbol availability: }
 \forall lib: lib.type \neq UNKNOWN \implies lib.symbols \neq \emptyset \lor lib.name \in known\_libraries
-```
+$
 
-```math
+$
 \text{Pattern matching correctness: }
-\forall file: matches\_library\_pattern(file) \iff (file \text{ starts with } "lib" \land file \text{ ends with } (".a" \lor ".so*"))
-```
+\forall file: matches\_library\_pattern(file) \iff (file \text{ starts with } "lib" \land file \text{ ends with } (".a" \lor ".so_"))
+$
 
-## Optimization Trigger Points
+== Optimization Trigger Points
 
-- **Inner loops**: Multi-path directory traversal with potential parallel scanning
-- **Memory allocation**: Library list pre-allocation based on typical system library counts  
-- **Bottleneck operations**: File pattern matching with compiled regex optimization
-- **Search optimization**: Path deduplication and caching of directory contents
-- **Symbol lookup**: Hash-based symbol set membership testing
+- _Inner loops_: Multi-path directory traversal with potential parallel scanning
+- _Memory allocation_: Library list pre-allocation based on typical system library counts  
+- _Bottleneck operations_: File pattern matching with compiled regex optimization
+- _Search optimization_: Path deduplication and caching of directory contents
+- _Symbol lookup*: Hash-based symbol set membership testing

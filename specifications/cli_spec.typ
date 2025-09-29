@@ -1,12 +1,13 @@
-# Command Line Interface Specification
+// Note: Tables may need manual conversion to Typst table syntax
+= Command Line Interface Specification
 
-## Overview
+== Overview
 
 The CLI interface handles command-line argument parsing and program execution coordination. As a non-algorithmic component focused on configuration and user interaction, this specification uses direct Julia documentation following the Mathematical-Driven AI Development methodology.
 
-## Interface Design (Julia Direct Documentation)
+== Interface Design (Julia Direct Documentation)
 
-### LinkerOptions Configuration Structure
+=== LinkerOptions Configuration Structure
 ```julia
 """
 LinkerOptions contains all configuration parameters extracted from command-line arguments.
@@ -50,7 +51,7 @@ mutable struct LinkerOptions
 end
 ```
 
-### Argument Processing Implementation
+=== Argument Processing Implementation
 ```julia
 """
 parse_arguments processes command-line arguments into LinkerOptions.
@@ -144,7 +145,7 @@ function parse_arguments(args::Vector{String})::LinkerOptions
 end
 ```
 
-### Address Parsing Utilities
+=== Address Parsing Utilities
 ```julia
 """
 parse_address_string converts various address formats to UInt64.
@@ -170,9 +171,9 @@ function parse_address_string(addr_str::String)::UInt64
 end
 ```
 
-## Program Flow Control (Julia Direct Documentation)
+== Program Flow Control (Julia Direct Documentation)
 
-### Main Entry Point
+=== Main Entry Point
 ```julia
 """
 main function coordinates the complete program execution flow.
@@ -211,7 +212,7 @@ function main(args::Vector{String} = ARGS)::Int
 end
 ```
 
-### Linker Execution Coordinator
+=== Linker Execution Coordinator
 ```julia
 """
 execute_linker_with_options coordinates the linking process using parsed options.
@@ -242,9 +243,9 @@ function execute_linker_with_options(options::LinkerOptions)::Int
 end
 ```
 
-## Help and Information Display (Julia Direct Documentation)
+== Help and Information Display (Julia Direct Documentation)
 
-### Help System
+=== Help System
 ```julia
 """
 show_help_message displays comprehensive usage information.
@@ -301,7 +302,7 @@ EXIT CODES:
 end
 ```
 
-### Version Information
+=== Version Information
 ```julia
 """
 show_version_information displays program version and build details.
@@ -333,9 +334,9 @@ For more information: https://github.com/nyanrus/mini-elf-linker-jl
 end
 ```
 
-## Error Handling and Validation (Julia Direct Documentation)
+== Error Handling and Validation (Julia Direct Documentation)
 
-### Input Validation
+=== Input Validation
 ```julia
 """
 validate_input_files checks that all specified input files exist and are readable.
@@ -360,7 +361,7 @@ function validate_input_files(input_files::Vector{String})
 end
 ```
 
-### Option Validation
+=== Option Validation
 ```julia
 """
 validate_linker_options performs semantic validation on parsed options.
@@ -390,9 +391,9 @@ function validate_linker_options(options::LinkerOptions)
 end
 ```
 
-## Integration with Mathematical Components
+== Integration with Mathematical Components
 
-### Interface to Algorithmic Linker
+=== Interface to Algorithmic Linker
 ```julia
 """
 execute_linking_pipeline bridges CLI configuration to mathematical linking algorithms.
@@ -428,23 +429,23 @@ function execute_linking_pipeline(input_files::Vector{String},
 end
 ```
 
-### Library Path Processing → Library search path handling
+=== Library Path Processing → Library search path handling
 
-```math
+$
 library\_paths: \{L\_flag \in args : L\_flag = "-L" \lor startswith(L\_flag, "-L")\} \to Vector(String)
-```
+$
 
-**Path extraction logic**:
-```math
+_Path extraction logic_:
+$
 extract\_library\_path(L\_flag) = \begin{cases}
 args[next(L\_flag)] & \text{if } L\_flag = "-L" \\
 substring(L\_flag, 3) & \text{if } startswith(L\_flag, "-L") \land |L\_flag| > 2
 \end{cases}
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: Library path extraction and validation
+= Mathematical model: Library path extraction and validation
 elseif arg == "-L"
     if i + 1 <= length(args)
         push!(options.library_search_paths, args[i + 1])  # ↔ Path list extension
@@ -457,24 +458,24 @@ elseif startswith(arg, "-L")
     push!(options.library_search_paths, arg[3:end])       # ↔ Embedded path extraction
 ```
 
-### Library Name Processing → Library linking directives
+=== Library Name Processing → Library linking directives
 
-```math
+$
 library\_names: \{l\_flag \in args : l\_flag = "-l" \lor startswith(l\_flag, "-l")\} \to Vector(String)
-```
+$
 
-**Library name mapping**:
-```math
+_Library name mapping_:
+$
 library\_resolution(name) = \begin{cases}
 "lib" + name + ".so" & \text{if shared linking} \\
 "lib" + name + ".a" & \text{if static linking} \\
 search\_all\_variants(name) & \text{if mixed linking}
 \end{cases}
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: Library name processing with deferred resolution
+= Mathematical model: Library name processing with deferred resolution
 elseif arg == "-l"
     if i + 1 <= length(args)
         push!(options.library_names, args[i + 1])     # ↔ Name storage
@@ -487,20 +488,20 @@ elseif startswith(arg, "-l")
     push!(options.library_names, arg[3:end])          # ↔ Embedded name extraction
 ```
 
-### Address Parsing → Base address specification
+=== Address Parsing → Base address specification
 
-```math
+$
 parse\_address: HexString \to UInt64 \cup \{Error\}
-```
+$
 
-**Address validation**:
-```math
+_Address validation_:
+$
 valid\_address(addr) = addr \in [0x400000, 0x7FFFFFFF] \land aligned(addr, 0x1000)
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: Address parsing with validation
+= Mathematical model: Address parsing with validation
 elseif arg == "--Ttext" || arg == "--Ttext-segment"
     if i + 1 <= length(args)
         options.base_address = parse(UInt64, args[i + 1], base=16)  # ↔ Hex parsing
@@ -512,20 +513,20 @@ elseif startswith(arg, "--Ttext=")
     options.base_address = parse(UInt64, split(arg, "=", 2)[2], base=16)  # ↔ Embedded hex parsing
 ```
 
-### Help System → `show_help` function
+=== Help System → `show_help` function
 
-```math
+$
 show\_help: \{\} \to IO\_Output
-```
+$
 
-**Information organization**:
-```math
+_Information organization_:
+$
 help\_content = \{usage, options, examples, compatibility\_notes\}
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: Structured help output generation
+= Mathematical model: Structured help output generation
 function show_help()
     println("""
 Mini ELF Linker - LLD Compatible Interface
@@ -542,15 +543,15 @@ OPTIONS:
 end
 ```
 
-### Version Information → `show_version` function
+=== Version Information → `show_version` function
 
-```math
+$
 version\_info: \{\} \to \{version\_string, build\_info, compatibility\_level\}
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: Version information compilation
+= Mathematical model: Version information compilation
 function show_version()
     println("Mini ELF Linker v0.1.0")               # ↔ Version string output
     println("Julia implementation of ELF linking")   # ↔ Description
@@ -558,20 +559,20 @@ function show_version()
 end
 ```
 
-### Linker Execution → `execute_linker` function
+=== Linker Execution → `execute_linker` function
 
-```math
+$
 execute\_linker: LinkerOptions \to Boolean
-```
+$
 
-**Execution pipeline**:
-```math
+_Execution pipeline_:
+$
 options \xrightarrow{validate} validated\_options \xrightarrow{link} result \xrightarrow{output} success\_status
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: execute_linker: LinkerOptions → Boolean
+= Mathematical model: execute_linker: LinkerOptions → Boolean
 function execute_linker(options::LinkerOptions)::Bool
     try
         # Validation phase
@@ -612,23 +613,23 @@ function execute_linker(options::LinkerOptions)::Bool
 end
 ```
 
-### Main Entry Point → `main` function
+=== Main Entry Point → `main` function
 
-```math
+$
 main: Vector(String) \to ExitCode
-```
+$
 
-**Program flow control**:
-```math
+_Program flow control_:
+$
 main(args) = \begin{cases}
 0 & \text{if } execute\_linker(parse\_arguments(args)) = true \\
 1 & \text{otherwise}
 \end{cases}
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: main: Vector(String) → ExitCode
+= Mathematical model: main: Vector(String) → ExitCode
 function main(args::Vector{String} = ARGS)
     try
         options = parse_arguments(args)               # ↔ Argument parsing phase
@@ -641,22 +642,22 @@ function main(args::Vector{String} = ARGS)
 end
 ```
 
-## Complexity Analysis
+== Complexity Analysis
 
-```math
+$
 \begin{align}
 T_{parse}(n) &= O(n) \quad \text{– Linear argument processing} \\
 T_{validate}(m) &= O(m) \quad \text{where } m = \text{option count} \\
 T_{execute}(f) &= O(linking(f)) \quad \text{where } f = \text{input files} \\
 S_{options}(n) &= O(n) \quad \text{– Storage proportional to arguments}
 \end{align}
-```
+$
 
-## LLD Compatibility Matrix
+== LLD Compatibility Matrix
 
-```math
+$
 \text{Compatibility mapping: } lld\_option \mapsto mini\_elf\_option
-```
+$
 
 | LLD Option | Mini ELF Linker | Status | Mathematical Equivalence |
 |------------|-----------------|---------|-------------------------|
@@ -668,24 +669,24 @@ S_{options}(n) &= O(n) \quad \text{– Storage proportional to arguments}
 | `-static` | `-static` | ✅ Full | $static_{lld} = static_{mini}$ |
 | `--verbose` | `--verbose` | ✅ Full | $verbose_{lld} = verbose_{mini}$ |
 
-## Error Handling and Robustness
+== Error Handling and Robustness
 
-```math
+$
 \text{Error recovery: } \forall arg \in args: \exists action \in \{process, warn, error\}
-```
+$
 
-**Error classification**:
-```math
+_Error classification_:
+$
 error\_type(condition) = \begin{cases}
 FATAL & \text{if } missing\_required\_parameter(condition) \\
 WARNING & \text{if } unknown\_flag(condition) \\
 IGNORE & \text{if } redundant\_option(condition)
 \end{cases}
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: Robust error handling with classification
+= Mathematical model: Robust error handling with classification
 elseif startswith(arg, "-")
     # Unknown flag - warn but continue
     if options.verbose
@@ -694,9 +695,9 @@ elseif startswith(arg, "-")
     # Continue processing (graceful degradation)
 ```
 
-## Optimization Trigger Points
+== Optimization Trigger Points
 
-- **Argument parsing**: Single-pass linear algorithm with early termination for help/version
-- **Memory allocation**: Pre-allocate vectors based on typical argument patterns
-- **String processing**: Minimize string allocations during parsing
-- **Validation**: Defer expensive validation until execution phase
+- _Argument parsing_: Single-pass linear algorithm with early termination for help/version
+- _Memory allocation_: Pre-allocate vectors based on typical argument patterns
+- _String processing_: Minimize string allocations during parsing
+- _Validation_: Defer expensive validation until execution phase

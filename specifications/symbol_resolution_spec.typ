@@ -1,20 +1,20 @@
-# Symbol Resolution Mathematical Specification
+= Symbol Resolution Mathematical Specification
 
-## Overview
+== Overview
 
 This specification defines the mathematical models for symbol resolution in the MiniElfLinker. Following the Mathematical-Driven AI Development methodology, symbol resolution algorithms use mathematical notation for the core resolution processes while symbol table data structures use direct Julia implementation.
 
-## Mathematical Model
+== Mathematical Model
 
-### Symbol Space Framework
+=== Symbol Space Framework
 
-**Symbol Universe**:
-```math
+_Symbol Universe_:
+$
 \mathcal{U}_{symbols} = \{\text{all possible symbol names}\}
-```
+$
 
-**Symbol Classification**:
-```math
+_Symbol Classification_:
+$
 \begin{align}
 \mathcal{S}_{defined} &= \{s \in symbols : defined(s) = true\} \\
 \mathcal{S}_{undefined} &= \{s \in symbols : defined(s) = false\} \\
@@ -22,47 +22,47 @@ This specification defines the mathematical models for symbol resolution in the 
 \mathcal{S}_{local} &= \{s \in symbols : binding(s) = STB\_LOCAL\} \\
 \mathcal{S}_{weak} &= \{s \in symbols : binding(s) = STB\_WEAK\}
 \end{align}
-```
+$
 
-**Symbol Information Representation**:
-```math
+_Symbol Information Representation_:
+$
 symbol = \langle name, value, size, binding, type, section, defined, source \rangle
-```
+$
 
-**Resolution Function**:
-```math
+_Resolution Function_:
+$
 \delta_{resolve}: \mathcal{S}_{undefined} \times \mathcal{S}_{global} \to (\mathcal{S}_{resolved}, \mathcal{S}_{unresolved})
-```
+$
 
-### Symbol Resolution Algorithm
+=== Symbol Resolution Algorithm
 
-**Primary Resolution Function**:
-```math
+_Primary Resolution Function_:
+$
 \delta_{resolve}(U, G) = \left(\{u \in U : \exists g \in G, name(u) = name(g)\}, \{u \in U : \forall g \in G, name(u) \neq name(g)\}\right)
-```
+$
 
-**Resolution Precedence Order**:
-```math
+_Resolution Precedence Order_:
+$
 \text{precedence}(s_1, s_2) = \begin{cases}
 s_1 & \text{if } binding(s_1) = STB\_GLOBAL \land binding(s_2) = STB\_WEAK \\
 s_2 & \text{if } binding(s_1) = STB\_WEAK \land binding(s_2) = STB\_GLOBAL \\
 s_1 & \text{if } binding(s_1) = binding(s_2) \land \text{earlier}(s_1, s_2) \\
 \text{error} & \text{if multiple strong definitions exist}
 \end{cases}
-```
+$
 
-**Symbol Address Resolution**:
-```math
+_Symbol Address Resolution_:
+$
 \text{address}(symbol) = \begin{cases}
 symbol.value & \text{if } symbol.section = SHN\_ABS \\
 section\_base + symbol.value & \text{if } symbol.section \neq SHN\_UNDEF \\
 \perp & \text{if } symbol.section = SHN\_UNDEF
 \end{cases}
-```
+$
 
-## Implementation Correspondence
+== Implementation Correspondence
 
-### Symbol Information Structure (Non-Algorithmic)
+=== Symbol Information Structure (Non-Algorithmic)
 
 Following copilot guidelines, symbol data structures use direct Julia implementation:
 
@@ -89,25 +89,25 @@ mutable struct Symbol
         new(name, value, size, binding, type, section, defined, source, nothing, "")
 end
 
-# Symbol binding constants (non-algorithmic)
+= Symbol binding constants (non-algorithmic)
 const STB_LOCAL = 0
 const STB_GLOBAL = 1
 const STB_WEAK = 2
 
-# Symbol type constants (non-algorithmic) 
+= Symbol type constants (non-algorithmic) 
 const STT_NOTYPE = 0
 const STT_OBJECT = 1
 const STT_FUNC = 2
 const STT_SECTION = 3
 const STT_FILE = 4
 
-# Special section indices (non-algorithmic)
+= Special section indices (non-algorithmic)
 const SHN_UNDEF = 0
 const SHN_ABS = 0xfff1
 const SHN_COMMON = 0xfff2
 ```
 
-### Global Symbol Table Structure (Non-Algorithmic)
+=== Global Symbol Table Structure (Non-Algorithmic)
 
 ```julia
 """
@@ -143,16 +143,16 @@ function add_object_symbols!(table::GlobalSymbolTable, symbols::Vector{Symbol}, 
 end
 ```
 
-### Symbol Resolution Core Algorithm
+=== Symbol Resolution Core Algorithm
 
-**Mathematical Model**: $\delta_{resolve}: \mathcal{S}_{undefined} \times \mathcal{G}_{global} \to (\mathcal{S}_{resolved}, \mathcal{S}_{unresolved})$
+_Mathematical Model_: $\delta_{resolve}: \mathcal{S}_{undefined} \times \mathcal{G}_{global} \to (\mathcal{S}_{resolved}, \mathcal{S}_{unresolved})$
 
-**Resolution Pipeline**:
-```math
+_Resolution Pipeline_:
+$
 symbols \xrightarrow{\text{classify}} (defined, undefined) \xrightarrow{\text{resolve}} (resolved, unresolved) \xrightarrow{\text{address}} final\_symbols
-```
+$
 
-**Implementation**:
+_Implementation_:
 ```julia
 """
 Mathematical model: δ_resolve: 𝒮_undefined × 𝒢_global → (𝒮_resolved, 𝒮_unresolved)
@@ -187,16 +187,16 @@ function δ_resolve_symbols!(linker::DynamicLinker)::Vector{String}
 end
 ```
 
-### Symbol Classification Algorithm
+=== Symbol Classification Algorithm
 
-**Mathematical Model**: $\delta_{classify}: \mathcal{S}_{symbols} \to (\mathcal{S}_{defined}, \mathcal{S}_{undefined})$
+_Mathematical Model_: $\delta_{classify}: \mathcal{S}_{symbols} \to (\mathcal{S}_{defined}, \mathcal{S}_{undefined})$
 
-**Classification Criteria**:
-```math
+_Classification Criteria_:
+$
 \delta_{classify}(symbols) = (\{s : s.defined = true\}, \{s : s.defined = false\})
-```
+$
 
-**Implementation**:
+_Implementation_:
 ```julia
 """
 Mathematical model: δ_classify: 𝒮_symbols → (𝒮_defined, 𝒮_undefined)
@@ -219,19 +219,19 @@ function δ_classify_symbols(symbol_table::GlobalSymbolTable)::Tuple{Dict{String
 end
 ```
 
-### Definition Search Algorithm
+=== Definition Search Algorithm
 
-**Mathematical Model**: $\delta_{find}: \text{SymbolName} \times \mathcal{S}_{defined} \to \text{Symbol} \cup \{\perp\}$
+_Mathematical Model_: $\delta_{find}: \text{SymbolName} \times \mathcal{S}_{defined} \to \text{Symbol} \cup \{\perp\}$
 
-**Search Function**:
-```math
+_Search Function_:
+$
 \delta_{find}(name, defined\_symbols) = \begin{cases}
 s & \text{if } \exists s \in defined\_symbols: s.name = name \\
 \perp & \text{otherwise}
 \end{cases}
-```
+$
 
-**Implementation**:
+_Implementation_:
 ```julia
 """
 Mathematical model: δ_find: SymbolName × 𝒮_defined → Symbol ∪ {⊥}
@@ -252,29 +252,29 @@ function δ_find_definition(symbol_table::GlobalSymbolTable, symbol_name::String
 end
 ```
 
-### Symbol Conflict Resolution Algorithm
+=== Symbol Conflict Resolution Algorithm
 
-**Mathematical Model**: $\delta_{conflict}: \text{Symbol} \times \text{Symbol} \to \text{Symbol}$
+_Mathematical Model_: $\delta_{conflict}: \text{Symbol} \times \text{Symbol} \to \text{Symbol}$
 
-**Resolution Logic**:
-```math
+_Resolution Logic_:
+$
 \delta_{conflict}(s_1, s_2) = \begin{cases}
 s_1 & \text{if } \text{stronger}(s_1, s_2) \\
 s_2 & \text{if } \text{stronger}(s_2, s_1) \\
 \text{error} & \text{if multiple strong definitions}
 \end{cases}
-```
+$
 
-**Strength Ordering**:
-```math
+_Strength Ordering_:
+$
 \text{stronger}(s_1, s_2) = \begin{cases}
 true & \text{if } binding(s_1) = STB\_GLOBAL \land binding(s_2) = STB\_WEAK \\
 true & \text{if } binding(s_1) = binding(s_2) = STB\_GLOBAL \land \text{earlier}(s_1, s_2) \\
 false & \text{otherwise}
 \end{cases}
-```
+$
 
-**Implementation**:
+_Implementation_:
 ```julia
 """
 Mathematical model: δ_conflict: Symbol × Symbol → Symbol
@@ -311,20 +311,20 @@ function δ_resolve_symbol_conflict(existing::Symbol, new_symbol::Symbol)::Symbo
 end
 ```
 
-### Address Computation Algorithm
+=== Address Computation Algorithm
 
-**Mathematical Model**: $\delta_{address}: \mathcal{S}_{resolved} \times \mathcal{M}_{regions} \to \mathcal{S}_{addressed}$
+_Mathematical Model_: $\delta_{address}: \mathcal{S}_{resolved} \times \mathcal{M}_{regions} \to \mathcal{S}_{addressed}$
 
-**Address Calculation**:
-```math
+_Address Calculation_:
+$
 \text{final\_address}(symbol, regions) = \begin{cases}
 symbol.value & \text{if } symbol.section = SHN\_ABS \\
 region.base + symbol.value & \text{if } \text{find\_region}(symbol.section) = region \\
 \text{undefined} & \text{if } symbol.section = SHN\_UNDEF
 \end{cases}
-```
+$
 
-**Implementation**:
+_Implementation_:
 ```julia
 """
 Mathematical model: δ_address: 𝒮_resolved × ℳ_regions → 𝒮_addressed
@@ -370,18 +370,18 @@ function δ_calculate_symbol_address(symbol::Symbol, regions::Vector{MemoryRegio
 end
 ```
 
-## Library Symbol Resolution
+== Library Symbol Resolution
 
-### External Symbol Resolution Algorithm
+=== External Symbol Resolution Algorithm
 
-**Mathematical Model**: $\delta_{library}: \mathcal{S}_{unresolved} \times \mathcal{L}_{libraries} \to (\mathcal{S}_{resolved}, \mathcal{S}_{still\_unresolved})$
+_Mathematical Model_: $\delta_{library}: \mathcal{S}_{unresolved} \times \mathcal{L}_{libraries} \to (\mathcal{S}_{resolved}, \mathcal{S}_{still\_unresolved})$
 
-**Library Search Function**:
-```math
+_Library Search Function_:
+$
 \delta_{search}(symbol\_name, libraries) = \bigcup_{lib \in libraries} \{s \in lib.symbols : s.name = symbol\_name\}
-```
+$
 
-**Implementation**:
+_Implementation_:
 ```julia
 """
 Mathematical model: δ_library: 𝒮_unresolved × ℒ_libraries → (𝒮_resolved, 𝒮_still_unresolved)
@@ -440,18 +440,18 @@ function δ_get_unresolved_symbols(symbol_table::GlobalSymbolTable)::Vector{Stri
 end
 ```
 
-## Symbol Table Management
+== Symbol Table Management
 
-### Symbol Table Building Algorithm
+=== Symbol Table Building Algorithm
 
-**Mathematical Model**: $\delta_{build}: \mathcal{O}_{objects} \to \mathcal{T}_{global}$
+_Mathematical Model_: $\delta_{build}: \mathcal{O}_{objects} \to \mathcal{T}_{global}$
 
-**Table Construction**:
-```math
+_Table Construction_:
+$
 \delta_{build}(objects) = \bigcup_{obj \in objects} \text{extract\_symbols}(obj)
-```
+$
 
-**Implementation**:
+_Implementation_:
 ```julia
 """
 Mathematical model: δ_build: 𝒪_objects → 𝒯_global
@@ -480,61 +480,61 @@ function δ_build_global_symbol_table!(linker::DynamicLinker, object_files::Vect
 end
 ```
 
-## Complexity Analysis
+== Complexity Analysis
 
-### Time Complexity
+=== Time Complexity
 
-```math
+$
 \begin{align}
 T_{\text{classification}}(n) &= O(n) \quad \text{– Linear symbol iteration} \\
 T_{\text{lookup}}(1) &= O(1) \quad \text{– Hash table lookup (average case)} \\
 T_{\text{resolution}}(u, d) &= O(u \cdot d) \quad \text{– Undefined × defined symbols} \\
 T_{\text{address\_computation}}(n) &= O(n) \quad \text{– Linear in symbol count}
 \end{align}
-```
+$
 
-### Space Complexity
+=== Space Complexity
 
-```math
+$
 \begin{align}
 S_{\text{symbol\_table}}(n) &= O(n) \quad \text{– Linear in total symbols} \\
 S_{\text{resolution\_metadata}}(r) &= O(r) \quad \text{– Resolution tracking data} \\
 S_{\text{conflict\_handling}}(c) &= O(c) \quad \text{– Conflict resolution state}
 \end{align}
-```
+$
 
-### Optimization Opportunities
+=== Optimization Opportunities
 
-**Current Hash Table Lookup**:
-```math
+_Current Hash Table Lookup_:
+$
 T_{\text{average}} = O(1), \quad T_{\text{worst}} = O(n)
-```
+$
 
-**Optimized Multi-Level Indexing**:
-```math
+_Optimized Multi-Level Indexing_:
+$
 T_{\text{optimized}} = O(\log n) \text{ worst-case with balanced trees}
-```
+$
 
-**Symbol Pre-filtering**:
-```math
+_Symbol Pre-filtering_:
+$
 |\mathcal{S}_{filtered}| \ll |\mathcal{S}_{all}| \text{ reduces search space}
-```
+$
 
-## Error Handling and Diagnostics
+== Error Handling and Diagnostics
 
-### Symbol Resolution Errors
+=== Symbol Resolution Errors
 
-**Error Categories**:
-```math
+_Error Categories_:
+$
 \mathcal{E}_{symbol} = \mathcal{E}_{undefined} \cup \mathcal{E}_{multiple} \cup \mathcal{E}_{circular} \cup \mathcal{E}_{type\_mismatch}
-```
+$
 
-**Error Reporting Function**:
-```math
+_Error Reporting Function_:
+$
 \text{report}: \mathcal{E}_{symbol} \to \text{DiagnosticMessage}
-```
+$
 
-**Implementation**:
+_Implementation_:
 ```julia
 """
 Symbol resolution error handling with comprehensive diagnostics.
@@ -577,24 +577,24 @@ function δ_validate_symbol_resolution(linker::DynamicLinker)::Vector{SymbolReso
 end
 ```
 
-## Integration Points
+== Integration Points
 
-### Memory Allocation Interface
+=== Memory Allocation Interface
 
-```math
+$
 \text{get\_symbol\_address}: \text{SymbolName} \times \mathcal{M}_{regions} \to \mathcal{A} \cup \{\perp\}
-```
+$
 
-### Relocation Processing Interface
+=== Relocation Processing Interface
 
-```math
+$
 \text{resolve\_relocation\_symbol}: \text{SymbolIndex} \times \mathcal{T}_{global} \to \text{SymbolAddress}
-```
+$
 
-### Library Support Interface
+=== Library Support Interface
 
-```math
+$
 \text{import\_library\_symbols}: \mathcal{L}_{library} \times \mathcal{T}_{global} \to \mathcal{T}_{global}'
-```
+$
 
 This mathematical specification provides a comprehensive framework for understanding symbol resolution in the MiniElfLinker, following the humble mathematical notation guidelines while enabling precise algorithmic understanding and optimization analysis.

@@ -34,8 +34,7 @@ For the main project code, see:
 - `src/` - Core implementation
 - `test/` - Official test suite
 - `examples/` - Example usage
-- `specifications/` - Mathematical specifications
-- `strategic_analysis/` - Production planning
+- `specifications/` - Mathematical specifications (Typst format)
 - `verification/` - Testing methodology
 
 This playground complements the mathematical-driven AI development methodology described in `.github/copilot-instructions.md`.

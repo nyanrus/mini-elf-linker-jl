@@ -1,50 +1,50 @@
-# ELF Binary Format Specification
+= ELF Binary Format Specification
 
-## Overview
+== Overview
 
 This specification defines how MiniElfLinker interprets and processes the ELF (Executable and Linkable Format) binary format. ELF is the standard binary format for executables, object files, and shared libraries on Unix-like systems.
 
-## ELF File Structure
+== ELF File Structure
 
-### File Layout
+=== File Layout
 ```
 ELF File = ELF Header + Program Headers + Sections + Section Headers
 ```
 
-### Basic Components
-1. **ELF Header**: File metadata and pointers to other components
-2. **Program Headers**: Runtime loading information (executables)
-3. **Section Headers**: Development-time section information
-4. **Sections**: Actual code, data, and metadata
+=== Basic Components
+1. _ELF Header_: File metadata and pointers to other components
+2. _Program Headers_: Runtime loading information (executables)
+3. _Section Headers_: Development-time section information
+4. _Sections_: Actual code, data, and metadata
 
-## ELF Header Format
+== ELF Header Format
 
-### Header Constants
+=== Header Constants
 ```julia
-# ELF Magic Number
+= ELF Magic Number
 const ELF_MAGIC = (0x7f, UInt8('E'), UInt8('L'), UInt8('F'))
 
-# ELF Class (Architecture)
+= ELF Class (Architecture)
 const ELFCLASS32 = 1    # 32-bit objects
 const ELFCLASS64 = 2    # 64-bit objects
 
-# Data Encoding  
+= Data Encoding  
 const ELFDATA2LSB = 1   # Little-endian
 const ELFDATA2MSB = 2   # Big-endian
 
-# Object File Types
+= Object File Types
 const ET_NONE = 0       # No file type
 const ET_REL = 1        # Relocatable file  
 const ET_EXEC = 2       # Executable file
 const ET_DYN = 3        # Shared object file
 const ET_CORE = 4       # Core file
 
-# Machine Types
+= Machine Types
 const EM_X86_64 = 62    # AMD x86-64
 const EM_AARCH64 = 183  # ARM 64-bit
 ```
 
-### Header Validation
+=== Header Validation
 ```julia
 function validate_elf_header(header::ElfHeader)::Bool
     # Check magic number
@@ -76,9 +76,9 @@ function validate_elf_header(header::ElfHeader)::Bool
 end
 ```
 
-## Section Types
+== Section Types
 
-### Standard Section Types
+=== Standard Section Types
 ```julia
 const SHT_NULL = 0          # Inactive section
 const SHT_PROGBITS = 1      # Program data
@@ -92,7 +92,7 @@ const SHT_NOBITS = 8        # Program space with no data (BSS)
 const SHT_REL = 9           # Relocation entries, no addends
 ```
 
-### Section Flags
+=== Section Flags
 ```julia
 const SHF_WRITE = 0x1       # Writable section
 const SHF_ALLOC = 0x2       # Occupies memory during execution
@@ -101,7 +101,7 @@ const SHF_MERGE = 0x10      # Might be merged
 const SHF_STRINGS = 0x20    # Contains null-terminated strings
 ```
 
-### Section Processing
+=== Section Processing
 ```julia
 function process_section(header::SectionHeader, data::Vector{UInt8})
     if header.type == SHT_SYMTAB
@@ -118,16 +118,16 @@ function process_section(header::SectionHeader, data::Vector{UInt8})
 end
 ```
 
-## Symbol Table Format
+== Symbol Table Format
 
-### Symbol Binding Types
+=== Symbol Binding Types
 ```julia
 const STB_LOCAL = 0     # Local scope
 const STB_GLOBAL = 1    # Global scope
 const STB_WEAK = 2      # Weak reference
 ```
 
-### Symbol Types
+=== Symbol Types
 ```julia
 const STT_NOTYPE = 0    # Symbol type not specified
 const STT_OBJECT = 1    # Data object
@@ -137,25 +137,25 @@ const STT_FILE = 4      # File name
 const STT_COMMON = 5    # Common data object
 ```
 
-### Symbol Information Extraction
+=== Symbol Information Extraction
 ```julia
-# Extract binding from symbol info field
+= Extract binding from symbol info field
 function st_bind(info::UInt8)::UInt8
     return (info >> 4) & 0xf
 end
 
-# Extract type from symbol info field  
+= Extract type from symbol info field  
 function st_type(info::UInt8)::UInt8
     return info & 0xf
 end
 
-# Create symbol info from binding and type
+= Create symbol info from binding and type
 function st_info(bind::UInt8, type::UInt8)::UInt8
     return (bind << 4) | (type & 0xf)
 end
 ```
 
-### Symbol Resolution
+=== Symbol Resolution
 ```julia
 function resolve_symbol_value(symbol::SymbolTableEntry, sections::Vector{SectionHeader})::UInt64
     if symbol.shndx == SHN_UNDEF
@@ -171,9 +171,9 @@ function resolve_symbol_value(symbol::SymbolTableEntry, sections::Vector{Section
 end
 ```
 
-## Relocation Processing
+== Relocation Processing
 
-### x86-64 Relocation Types
+=== x86-64 Relocation Types
 ```julia
 const R_X86_64_NONE = 0         # No relocation
 const R_X86_64_64 = 1           # Direct 64-bit address
@@ -185,25 +185,25 @@ const R_X86_64_GLOB_DAT = 6     # Create GOT entry
 const R_X86_64_JUMP_SLOT = 7    # Create PLT entry
 ```
 
-### Relocation Information Extraction
+=== Relocation Information Extraction
 ```julia
-# Extract symbol table index from relocation info
+= Extract symbol table index from relocation info
 function elf64_r_sym(info::UInt64)::UInt32
     return UInt32(info >> 32)
 end
 
-# Extract relocation type from relocation info
+= Extract relocation type from relocation info
 function elf64_r_type(info::UInt64)::UInt32
     return UInt32(info & 0xffffffff)
 end
 
-# Create relocation info from symbol index and type
+= Create relocation info from symbol index and type
 function elf64_r_info(sym::UInt32, type::UInt32)::UInt64
     return (UInt64(sym) << 32) | UInt64(type)
 end
 ```
 
-### Relocation Application
+=== Relocation Application
 ```julia
 function apply_relocation(rel::RelocationEntry, symbol_value::UInt64, 
                          section_data::Vector{UInt8}, section_address::UInt64)
@@ -230,9 +230,9 @@ function apply_relocation(rel::RelocationEntry, symbol_value::UInt64,
 end
 ```
 
-## String Table Handling
+== String Table Handling
 
-### String Storage Format
+=== String Storage Format
 - Null-terminated strings stored consecutively
 - Index 0 always contains empty string
 - String references use byte offsets into table
@@ -271,9 +271,9 @@ function get_string(string_table::Vector{UInt8}, offset::UInt32)::String
 end
 ```
 
-## Binary I/O Utilities
+== Binary I/O Utilities
 
-### Little-Endian Reading
+=== Little-Endian Reading
 ```julia
 function read_uint16_le(io::IO)::UInt16
     bytes = read(io, 2)
@@ -293,7 +293,7 @@ function read_uint64_le(io::IO)::UInt64
 end
 ```
 
-### Little-Endian Writing
+=== Little-Endian Writing
 ```julia
 function write_uint16_le(data::Vector{UInt8}, offset::Int, value::UInt16)
     data[offset + 1] = UInt8(value & 0xff)
@@ -313,9 +313,9 @@ function write_uint64_le(data::Vector{UInt8}, offset::Int, value::UInt64)
 end
 ```
 
-## Format Validation
+== Format Validation
 
-### File Integrity Checks
+=== File Integrity Checks
 ```julia
 function validate_elf_file(header::ElfHeader, sections::Vector{SectionHeader})::Bool
     # Check section header count
@@ -341,7 +341,7 @@ function validate_elf_file(header::ElfHeader, sections::Vector{SectionHeader})::
 end
 ```
 
-### Size Consistency Checks
+=== Size Consistency Checks
 ```julia
 function validate_section_sizes(sections::Vector{SectionHeader}, file_size::Int)::Bool
     for section in sections
@@ -360,29 +360,29 @@ function validate_section_sizes(sections::Vector{SectionHeader}, file_size::Int)
 end
 ```
 
-## Architecture-Specific Details
+== Architecture-Specific Details
 
-### x86-64 Specifics
+=== x86-64 Specifics
 - 64-bit addresses and pointers
 - Little-endian byte order
 - 16-byte stack alignment requirement
 - Red zone: 128 bytes below stack pointer
 
-### ARM64 Considerations (Future)
+=== ARM64 Considerations (Future)
 - 64-bit addresses with different relocation types
 - Can be little or big-endian
 - Different calling conventions
 - ADRP/ADD instruction pairs for addressing
 
-## Error Recovery
+== Error Recovery
 
-### Partial File Handling
+=== Partial File Handling
 - Continue processing when encountering unknown sections
 - Skip corrupted symbol entries
 - Provide warnings for non-critical format violations
 - Attempt best-effort parsing of malformed files
 
-### Error Reporting
+=== Error Reporting
 ```julia
 struct ElfParseError
     message::String
@@ -395,9 +395,9 @@ function report_elf_error(error::ElfParseError)
 end
 ```
 
-## Optimization Trigger Points
+== Optimization Trigger Points
 
-- **Inner loops**: Symbol table iteration with O(n) complexity bounds
-- **Memory allocation**: Section data loading with size validation  
-- **Bottleneck operations**: String table parsing with linear scan
-- **Invariant preservation**: Magic number validation on every parse
+- _Inner loops_: Symbol table iteration with O(n) complexity bounds
+- _Memory allocation_: Section data loading with size validation  
+- _Bottleneck operations_: String table parsing with linear scan
+- _Invariant preservation_: Magic number validation on every parse

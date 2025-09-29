@@ -1,50 +1,50 @@
-# Native Binary Parsing Specification
+= Native Binary Parsing Specification
 
-## Overview
+== Overview
 
 The native parsing module provides direct binary file analysis without depending on external tools like `nm`, `objdump`, or `readelf`. Following the Mathematical-Driven AI Development methodology, this specification uses Julia directly for non-algorithmic components (constants, data structures, file I/O) and mathematical notation for algorithmic components (parsing algorithms, symbol extraction).
 
-## Non-Algorithmic Components (Julia Direct Documentation)
+== Non-Algorithmic Components (Julia Direct Documentation)
 
-### Binary Format Constants
+=== Binary Format Constants
 ```julia
 """
 Native ELF constants for direct binary parsing.
 Non-algorithmic: static constant definitions for ELF format specification.
 """
 
-# ELF class identification
+= ELF class identification
 const NATIVE_ELF_CLASS_32 = 0x01
 const NATIVE_ELF_CLASS_64 = 0x02
 
-# Data encoding
+= Data encoding
 const NATIVE_ELF_DATA_LSB = 0x01  # Little-endian
 const NATIVE_ELF_DATA_MSB = 0x02  # Big-endian
 
-# ELF file types
+= ELF file types
 const NATIVE_ET_NONE = 0          # No file type
 const NATIVE_ET_REL = 1           # Relocatable file
 const NATIVE_ET_EXEC = 2          # Executable file
 const NATIVE_ET_DYN = 3           # Shared object file
 const NATIVE_ET_CORE = 4          # Core file
 
-# Machine types
+= Machine types
 const NATIVE_EM_X86_64 = 62       # AMD x86-64
 const NATIVE_EM_AARCH64 = 183     # ARM 64-bit
 
-# Symbol binding
+= Symbol binding
 const NATIVE_STB_LOCAL = 0
 const NATIVE_STB_GLOBAL = 1
 const NATIVE_STB_WEAK = 2
 
-# Symbol type
+= Symbol type
 const NATIVE_STT_NOTYPE = 0
 const NATIVE_STT_OBJECT = 1
 const NATIVE_STT_FUNC = 2
 const NATIVE_STT_SECTION = 3
 const NATIVE_STT_FILE = 4
 
-# Section header types
+= Section header types
 const NATIVE_SHT_NULL = 0
 const NATIVE_SHT_PROGBITS = 1
 const NATIVE_SHT_SYMTAB = 2
@@ -52,7 +52,7 @@ const NATIVE_SHT_STRTAB = 3
 const NATIVE_SHT_RELA = 4
 ```
 
-### Symbol Information Structure
+=== Symbol Information Structure
 ```julia
 """
 NativeSymbol represents a symbol extracted from ELF files.
@@ -76,7 +76,7 @@ struct NativeSymbol
 end
 ```
 
-### Binary I/O Utilities
+=== Binary I/O Utilities
 ```julia
 """
 Binary reading utilities for little-endian format processing.
@@ -102,7 +102,7 @@ function read_uint64_le(file::IO)::UInt64
 end
 ```
 
-### File Type Detection (Non-Algorithmic)
+=== File Type Detection (Non-Algorithmic)
 ```julia
 """
 detect_file_type_by_magic identifies file types using magic number signatures.
@@ -168,46 +168,46 @@ function detect_elf_subtype(magic_bytes::Vector{UInt8})::String
 end
 ```
 
-## Algorithmic Components (Mathematical Analysis)
+== Algorithmic Components (Mathematical Analysis)
 
-### ELF Parsing Algorithm
+=== ELF Parsing Algorithm
 
-**Mathematical Model**: ELF parsing transforms binary byte sequences into structured representations through sequential field extraction.
+_Mathematical Model_: ELF parsing transforms binary byte sequences into structured representations through sequential field extraction.
 
-```math
+$
 \text{Let } \mathcal{B} = \{b_1, b_2, \ldots, b_n\} \text{ be the binary file as byte sequence}
-```
+$
 
-```math
+$
 \text{Let } \mathcal{S} = \{\text{structured ELF components}\} \text{ be the target representation}
-```
+$
 
-**Parsing Function**:
-```math
+_Parsing Function_:
+$
 \Pi_{parse}: \mathcal{B} \to \mathcal{S} \cup \{\text{Error}\}
-```
+$
 
-**Sequential Extraction Operations**:
-```math
+_Sequential Extraction Operations_:
+$
 \begin{align}
 \Pi_{header} &: \mathcal{B}[0:64] \to \text{ElfHeader} \\
 \Pi_{sections} &: \mathcal{B}[h.shoff:h.shoff + h.shnum \times h.shentsize] \to \text{SectionHeaders} \\
 \Pi_{symbols} &: \mathcal{B}[s.offset:s.offset + s.size] \to \text{SymbolEntries}
 \end{align}
-```
+$
 
-**Parsing Pipeline Composition**:
-```math
+_Parsing Pipeline Composition_:
+$
 \Pi_{complete} = \Pi_{symbols} \circ \Pi_{sections} \circ \Pi_{header}
-```
+$
 
-**Complexity Analysis**:
-```math
+_Complexity Analysis_:
+$
 T_{parse}(n, s, m) = O(n) + O(s) + O(m) = O(n + s + m)
-```
+$
 where $n$ = file size, $s$ = number of sections, $m$ = number of symbols.
 
-**Implementation with Mathematical Correspondence**:
+_Implementation with Mathematical Correspondence_:
 ```julia
 """
 Mathematical model: Π_parse: ℬ → 𝒮 ∪ {Error}
@@ -244,47 +244,47 @@ function Π_extract_elf_symbols_native(filepath::String)::Vector{NativeSymbol}
 end
 ```
 
-### Symbol Extraction Algorithm
+=== Symbol Extraction Algorithm
 
-**Mathematical Model**: Symbol extraction transforms binary symbol table entries into structured symbol information.
+_Mathematical Model_: Symbol extraction transforms binary symbol table entries into structured symbol information.
 
-```math
+$
 \text{Let } \mathcal{T}_{symtab} = \{t_1, t_2, \ldots, t_k\} \text{ be symbol table entries}
-```
+$
 
-```math
+$
 \text{Let } \mathcal{T}_{strtab} = \{c_1, c_2, \ldots, c_l\} \text{ be string table characters}
-```
+$
 
-**Symbol Transformation Function**:
-```math
+_Symbol Transformation Function_:
+$
 \Sigma_{extract}: \mathcal{T}_{symtab} \times \mathcal{T}_{strtab} \to \mathcal{S}_{symbols}
-```
+$
 
-**Name Resolution Operation**:
-```math
+_Name Resolution Operation_:
+$
 \text{resolve\_name}(offset, \mathcal{T}_{strtab}) = \text{extract\_string}(\mathcal{T}_{strtab}[offset:null\_terminator])
-```
+$
 
-**Symbol Entry Transformation**:
-```math
+_Symbol Entry Transformation_:
+$
 \Sigma_{transform}(entry) = \begin{cases}
 \text{NativeSymbol}(\text{resolve\_name}(entry.name), entry.value, \ldots) & \text{if valid entry} \\
 \text{skip} & \text{if invalid or null entry}
 \end{cases}
-```
+$
 
-**Complexity Analysis**:
-```math
+_Complexity Analysis_:
+$
 T_{extraction}(k, l) = O(k \times \log l) \text{ for string lookups}
-```
+$
 
-**Optimization Potential**:
-```math
+_Optimization Potential_:
+$
 T_{optimized}(k, l) = O(k + l) \text{ with pre-processed string index}
-```
+$
 
-**Implementation**:
+_Implementation_:
 ```julia
 """
 Mathematical model: Σ_extract: 𝒯_symtab × 𝒯_strtab → 𝒮_symbols
@@ -324,43 +324,43 @@ function Π_parse_symbol_table(file::IO, symtab_section, strings::Vector{UInt8})
 end
 ```
 
-### Archive Processing Algorithm
+=== Archive Processing Algorithm
 
-**Mathematical Model**: Archive processing extracts and processes multiple object files contained within static library archives.
+_Mathematical Model_: Archive processing extracts and processes multiple object files contained within static library archives.
 
-```math
+$
 \text{Let } \mathcal{A} = \{\text{archive file}\} \text{ be the input archive}
-```
+$
 
-```math
+$
 \text{Let } \mathcal{O} = \{o_1, o_2, \ldots, o_m\} \text{ be extracted object files}
-```
+$
 
-```math
+$
 \text{Let } \mathcal{S}_i = \{\text{symbols in } o_i\} \text{ be symbol sets}
-```
+$
 
-**Archive Extraction Function**:
-```math
+_Archive Extraction Function_:
+$
 \mathcal{E}_{extract}: \mathcal{A} \to \mathcal{O}
-```
+$
 
-**Symbol Union Operation**:
-```math
+_Symbol Union Operation_:
+$
 \mathcal{S}_{total} = \bigcup_{i=1}^{m} \mathcal{S}_i
-```
+$
 
-**Complete Processing Function**:
-```math
+_Complete Processing Function_:
+$
 \Omega_{process}: \mathcal{A} \to \mathcal{S}_{total}
-```
+$
 
-**Complexity Analysis**:
-```math
+_Complexity Analysis_:
+$
 T_{archive}(m, s) = O(m \times s) \text{ where } m = \text{objects}, s = \text{avg symbols per object}
-```
+$
 
-**Implementation**:
+_Implementation_:
 ```julia
 """
 Mathematical model: Ω_process: 𝒜 → 𝒮_total
@@ -406,9 +406,9 @@ function Ω_extract_archive_symbols_native(archive_path::String)::Vector{String}
 end
 ```
 
-## Error Handling and Recovery (Non-Algorithmic)
+== Error Handling and Recovery (Non-Algorithmic)
 
-### Robust File Processing
+=== Robust File Processing
 ```julia
 """
 safe_symbol_extraction provides error-resilient symbol extraction.
@@ -430,7 +430,7 @@ function safe_symbol_extraction(filepath::String)::Vector{NativeSymbol}
 end
 ```
 
-### Format Validation
+=== Format Validation
 ```julia
 """
 validate_elf_structure performs consistency checks on parsed ELF components.
@@ -453,9 +453,9 @@ function validate_elf_structure(header, sections)::Bool
 end
 ```
 
-## Integration with Mathematical Linker Core
+== Integration with Mathematical Linker Core
 
-### Native Parsing Bridge
+=== Native Parsing Bridge
 ```julia
 """
 integrate_native_symbols! integrates natively parsed symbols into the mathematical linker.
@@ -484,9 +484,9 @@ function integrate_native_symbols!(linker::DynamicLinker, object_path::String)
 end
 ```
 
-## Archive Processing
+== Archive Processing
 
-### Static Library Symbol Extraction
+=== Static Library Symbol Extraction
 ```julia
 function extract_archive_symbols_native(archive_path::String)::Vector{String}
     symbols = String[]
@@ -530,9 +530,9 @@ function extract_archive_symbols_native(archive_path::String)::Vector{String}
 end
 ```
 
-## Section Processing
+== Section Processing
 
-### Section Header Parsing
+=== Section Header Parsing
 ```julia
 function parse_native_section_headers(file::IO, header)::Vector{Any}
     sections = []
@@ -561,7 +561,7 @@ function parse_native_section_headers(file::IO, header)::Vector{Any}
 end
 ```
 
-### String Table Loading
+=== String Table Loading
 ```julia
 function load_string_table(file::IO, strtab_section)::Vector{UInt8}
     seek(file, strtab_section.offset)
@@ -583,7 +583,7 @@ function get_string_at_offset(strtab::Vector{UInt8}, offset::UInt32)::String
 end
 ```
 
-### Symbol Table Parsing
+=== Symbol Table Parsing
 ```julia
 function parse_symbol_table(file::IO, symtab_section, strings::Vector{UInt8})::Vector{NativeSymbol}
     symbols = NativeSymbol[]
@@ -620,9 +620,9 @@ function parse_symbol_table(file::IO, symtab_section, strings::Vector{UInt8})::V
 end
 ```
 
-## Binary Utilities
+== Binary Utilities
 
-### Little-Endian Reading Functions
+=== Little-Endian Reading Functions
 ```julia
 function read_uint16_le(file::IO)::UInt16
     bytes = read(file, 2)
@@ -644,9 +644,9 @@ function read_uint64_le(file::IO)::UInt64
 end
 ```
 
-## Error Handling and Recovery
+== Error Handling and Recovery
 
-### Robust File Processing
+=== Robust File Processing
 ```julia
 function safe_symbol_extraction(filepath::String)::Vector{NativeSymbol}
     try
@@ -664,7 +664,7 @@ function safe_symbol_extraction(filepath::String)::Vector{NativeSymbol}
 end
 ```
 
-### Validation and Sanity Checks
+=== Validation and Sanity Checks
 ```julia
 function validate_elf_structure(header, sections)::Bool
     # Check section count matches header
@@ -683,9 +683,9 @@ function validate_elf_structure(header, sections)::Bool
 end
 ```
 
-## Performance Optimizations
+== Performance Optimizations
 
-### Lazy Symbol Loading
+=== Lazy Symbol Loading
 Only extract symbols when specifically needed:
 
 ```julia
@@ -704,7 +704,7 @@ function get_symbols(extractor::LazySymbolExtractor)::Vector{NativeSymbol}
 end
 ```
 
-### Caching for Repeated Access
+=== Caching for Repeated Access
 ```julia
 const SYMBOL_CACHE = Dict{String, Vector{NativeSymbol}}()
 
@@ -716,9 +716,9 @@ function get_symbols_cached(filepath::String)::Vector{NativeSymbol}
 end
 ```
 
-## Integration with Linker
+== Integration with Linker
 
-### Symbol Resolution Integration
+=== Symbol Resolution Integration
 ```julia
 function integrate_native_symbols!(linker::DynamicLinker, object_path::String)
     native_symbols = extract_elf_symbols_native(object_path)
@@ -742,27 +742,27 @@ end
 ```
 ```
 
-## Implementation Correspondence
+== Implementation Correspondence
 
-### File Type Detection → `detect_file_type_by_magic` function
+=== File Type Detection → `detect_file_type_by_magic` function
 
-```math
+$
 detect\_file\_type: FilePath \to FileType \cup \{Error\}
-```
+$
 
-**Magic byte classification**:
-```math
+_Magic byte classification_:
+$
 classify(bytes) = \begin{cases}
 ELF\_FILE & \text{if } bytes[1:4] = [0x7f, 0x45, 0x4c, 0x46] \\
 AR\_FILE & \text{if } bytes[1:8] = \text{"!<arch>\textbackslash n"} \\
 LINKER\_SCRIPT & \text{if } \text{"GROUP"} \in content \\
 UNKNOWN\_FILE & \text{otherwise}
 \end{cases}
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: detect_file_type: FilePath → FileType ∪ {Error}
+= Mathematical model: detect_file_type: FilePath → FileType ∪ {Error}
 function detect_file_type_by_magic(file_path::String)
     open(file_path, "r") do file
         magic_bytes = read(file, 8)
@@ -780,14 +780,14 @@ function detect_file_type_by_magic(file_path::String)
 end
 ```
 
-### Native ELF Symbol Extraction → `extract_elf_symbols_native` function
+=== Native ELF Symbol Extraction → `extract_elf_symbols_native` function
 
-```math
+$
 extract\_symbols: ELFFile \to Set(SymbolName)
-```
+$
 
-**Symbol filtering criteria**:
-```math
+_Symbol filtering criteria_:
+$
 valid\_symbol(sym) = \begin{cases}
 true & \text{if } binding(sym) \in \{STB\_GLOBAL, STB\_WEAK\} \\
      & \land shndx(sym) \neq 0 \\
@@ -795,11 +795,11 @@ true & \text{if } binding(sym) \in \{STB\_GLOBAL, STB\_WEAK\} \\
      & \land \neg startswith(name(sym), "\_") \\
 false & \text{otherwise}
 \end{cases}
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: extract_symbols: ELFFile → Set(SymbolName)
+= Mathematical model: extract_symbols: ELFFile → Set(SymbolName)
 function extract_elf_symbols_native(file_path::String)
     symbols = Set{String}()
     
@@ -823,24 +823,24 @@ function extract_elf_symbols_native(file_path::String)
 end
 ```
 
-### Symbol Table Parsing → `parse_symbol_table` function
+=== Symbol Table Parsing → `parse_symbol_table` function
 
-```math
+$
 parse\_symbol\_table: File \times Section \times StringTable \times Boolean \times Boolean \to Set(String)
-```
+$
 
-**Symbol validation logic**:
-```math
+_Symbol validation logic_:
+$
 \forall symbol \in symbol\_table: 
 \begin{cases}
 symbol \in result & \text{if } valid\_symbol(symbol) \\
 symbol \notin result & \text{otherwise}
 \end{cases}
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: parse_symbol_table with validation
+= Mathematical model: parse_symbol_table with validation
 function parse_symbol_table(file, symtab_section, strtab_section, little_endian, is_64bit)
     symbols = Set{String}()
     
@@ -865,23 +865,23 @@ function parse_symbol_table(file, symtab_section, strtab_section, little_endian,
 end
 ```
 
-## Archive Processing → `extract_archive_symbols_native` function
+== Archive Processing → `extract_archive_symbols_native` function
 
-```math
+$
 extract\_archive\_symbols: ArchiveFile \to Set(SymbolName)
-```
+$
 
-**Archive member processing**:
-```math
+_Archive member processing_:
+$
 archive\_symbols = \bigcup_{member \in archive} \begin{cases}
 extract\_elf\_symbols(member) & \text{if } is\_elf(member) \\
 \emptyset & \text{otherwise}
 \end{cases}
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: extract_archive_symbols: ArchiveFile → Set(SymbolName)
+= Mathematical model: extract_archive_symbols: ArchiveFile → Set(SymbolName)
 function extract_archive_symbols_native(file_path::String)
     symbols = Set{String}()
     
@@ -911,26 +911,26 @@ function extract_archive_symbols_native(file_path::String)
 end
 ```
 
-## Complexity Analysis
+== Complexity Analysis
 
-```math
+$
 \begin{align}
 T_{file\_detection}(n) &= O(1) \quad \text{– Constant magic byte check} \\
 T_{elf\_parsing}(m) &= O(m) \quad \text{– Linear in file size} \\
 T_{symbol\_extraction}(s) &= O(s) \quad \text{– Linear in symbol count} \\
 T_{archive\_processing}(k,s) &= O(k \cdot s) \quad \text{– Members × symbols per member}
 \end{align}
-```
+$
 
-## Transformation Pipeline
+== Transformation Pipeline
 
-```math
+$
 file\_path \xrightarrow{detect\_type} file\_type \xrightarrow{parse\_header} elf\_header \xrightarrow{extract\_symbols} symbol\_set
-```
+$
 
-**Code pipeline correspondence**:
+_Code pipeline correspondence_:
 ```julia
-# Mathematical pipeline: file_path → file_type → elf_header → symbol_set
+= Mathematical pipeline: file_path → file_type → elf_header → symbol_set
 function extract_symbols_pipeline(file_path::String)::Set{String}
     # Stage 1: file_path → file_type
     file_type = detect_file_type_by_magic(file_path)      # ↔ type detection
@@ -946,19 +946,19 @@ function extract_symbols_pipeline(file_path::String)::Set{String}
 end
 ```
 
-## Error Recovery and Robustness
+== Error Recovery and Robustness
 
-```math
+$
 \text{Error handling: } \forall file \in files: \exists result \in \{symbols, \emptyset, error\}
-```
+$
 
-```math
+$
 \text{Graceful degradation: } parse\_error(file) \implies return(\emptyset) \land continue
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: Robust parsing with error recovery
+= Mathematical model: Robust parsing with error recovery
 function extract_elf_symbols_native(file_path::String)
     try
         # Normal extraction logic
@@ -970,9 +970,9 @@ function extract_elf_symbols_native(file_path::String)
 end
 ```
 
-## Optimization Trigger Points
+== Optimization Trigger Points
 
-- **Magic byte detection**: Fast file type classification without full parsing
-- **Symbol filtering**: Early filtering reduces memory allocation
-- **Archive processing**: Temporary file optimization for member extraction
-- **Error recovery**: Continue processing even when individual files fail
+- _Magic byte detection_: Fast file type classification without full parsing
+- _Symbol filtering_: Early filtering reduces memory allocation
+- _Archive processing_: Temporary file optimization for member extraction
+- _Error recovery_: Continue processing even when individual files fail

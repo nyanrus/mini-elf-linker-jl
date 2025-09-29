@@ -1,17 +1,17 @@
-# Dynamic Linker Mathematical Specification
+= Dynamic Linker Mathematical Specification
 
-## Mathematical Model
+== Mathematical Model
 
-```math
+$
 \text{Domain: } \mathcal{D} = \{\text{ELF objects} \times \text{Symbol tables} \times \text{Memory layouts} \times \text{Relocation entries}\}
 \text{Range: } \mathcal{R} = \{\text{Linked executables} \times \text{Resolved symbols} \times \text{Memory mappings}\}
 \text{Mapping: } \Delta: \mathcal{D} \to \mathcal{R}
-```
+$
 
-**Dynamic Linker State Space**:
-```math
+_Dynamic Linker State Space_:
+$
 \mathcal{S}_{\Delta} = \langle \mathcal{O}, \Sigma, \mathcal{M}, \mathcal{R}, \alpha_{base}, \alpha_{next} \rangle
-```
+$
 
 where:
 - $\mathcal{O} = \{o_i\}_{i=1}^n$ is the set of loaded ELF objects
@@ -20,61 +20,61 @@ where:
 - $\mathcal{R} = \{r_l\}_{l=1}^p$ is the set of relocation entries
 - $\alpha_{base}, \alpha_{next} \in \mathbb{N}_{64}$ are address space boundaries
 
-## Operations
+== Operations
 
-```math
+$
 \text{Primary operations: } \{\delta_{resolve}, \delta_{load}, \delta_{relocate}, \delta_{allocate}\}
-```
+$
 
-**Operation Signatures**:
-```math
+_Operation Signatures_:
+$
 \begin{align}
 \delta_{load} &: \text{ElfFile} \times \mathcal{S}_{\Delta} \to \mathcal{S}_{\Delta}' \\
 \delta_{resolve} &: \mathcal{S}_{\Delta} \to \mathcal{S}_{\Delta}' \times \mathcal{U} \\
 \delta_{allocate} &: \mathcal{S}_{\Delta} \to \mathcal{S}_{\Delta}' \\
 \delta_{relocate} &: \mathcal{S}_{\Delta} \to \mathcal{S}_{\Delta}'
 \end{align}
-```
+$
 
 where $\mathcal{U}$ is the set of unresolved symbols.
 
-**Invariants**:
-```math
+_Invariants_:
+$
 \begin{align}
 \text{Symbol uniqueness: } &\forall s_1, s_2 \in \Sigma: s_1.name = s_2.name \implies s_1.address = s_2.address \\
 \text{Memory safety: } &\forall m_i, m_j \in \mathcal{M}: i \neq j \implies disjoint(m_i, m_j) \\
 \text{Address validity: } &\forall a \in addresses: \alpha_{base} \leq a < \alpha_{next}
 \end{align}
-```
+$
 
-**Complexity bounds**: $O(|\mathcal{O}| \cdot |\Sigma| + |\mathcal{R}|)$
+_Complexity bounds_: $O(|\mathcal{O}| \cdot |\Sigma| + |\mathcal{R}|)$
 
-## Implementation Correspondence
+== Implementation Correspondence
 
-### Symbol Resolution → `resolve_symbols` function
+=== Symbol Resolution → `resolve_symbols` function
 
-```math
+$
 \delta_{resolve}: \mathcal{S}_{\Delta} \to \mathcal{S}_{\Delta}' \times \mathcal{U}
-```
+$
 
-**Mathematical operation**: Global symbol table construction with binding resolution
+_Mathematical operation_: Global symbol table construction with binding resolution
 
-```math
+$
 \Sigma'(name) = \begin{cases}
 \text{address}(def) & \text{if } \exists def \in \bigcup_{o \in \mathcal{O}} symbols(o): def.name = name \land defined(def) \\
 0 & \text{if } binding(name) = STB\_WEAK \land \neg\exists def \\
 \bot & \text{if } binding(name) = STB\_STRONG \land \neg\exists def
 \end{cases}
-```
+$
 
-**Symbol binding precedence ordering**:
-```math
+_Symbol binding precedence ordering_:
+$
 STB\_GLOBAL \succ STB\_WEAK \succ STB\_LOCAL
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: δ_resolve: S_Δ → S_Δ' × U
+= Mathematical model: δ_resolve: S_Δ → S_Δ' × U
 function resolve_symbols(linker::DynamicLinker)::Vector{String}
     # Implementation of: Σ'(name) construction with binding precedence
     unresolved_symbols = String[]                           # ↔ U initialization
@@ -117,22 +117,22 @@ function resolve_symbols(linker::DynamicLinker)::Vector{String}
 end
 ```
 
-### Memory Allocation → `allocate_section` function
+=== Memory Allocation → `allocate_section` function
 
-```math
+$
 allocate: DynamicLinker \times Section \times Size \to MemoryRegion
-```
+$
 
-**Mathematical constraint**: Non-overlapping memory allocation
+_Mathematical constraint_: Non-overlapping memory allocation
 
-```math
+$
 \forall m_1, m_2 \in memory\_regions: 
 [m_1.base, m_1.base + m_1.size) \cap [m_2.base, m_2.base + m_2.size) = \emptyset
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: allocate: DynamicLinker × Section × Size → MemoryRegion
+= Mathematical model: allocate: DynamicLinker × Section × Size → MemoryRegion
 function allocate_section(linker::DynamicLinker, section::SectionHeader, size::Int)::MemoryRegion
     # Implementation of: find_next_available_address with alignment
     current_address = linker.next_address           # ↔ address tracking
@@ -148,39 +148,39 @@ function allocate_section(linker::DynamicLinker, section::SectionHeader, size::I
 end
 ```
 
-### Relocation Application → `perform_relocation!` function
+=== Relocation Application → `perform_relocation!` function
 
-```math
+$
 perform\_relocation: DynamicLinker \times ElfFile \times RelocationEntry \to DynamicLinker
-```
+$
 
-**Mathematical operations**: Symbol index correction and address computation
+_Mathematical operations_: Symbol index correction and address computation
 
-```math
+$
 symbol\_lookup(index_{elf}) = \begin{cases}
 symbols[index_{elf} + 1] & \text{if } index_{elf} > 0 \\
 null\_symbol & \text{if } index_{elf} = 0
 \end{cases}
-```
+$
 
-**Critical Index Correction**: ELF uses 0-based indexing, Julia uses 1-based indexing
+_Critical Index Correction_: ELF uses 0-based indexing, Julia uses 1-based indexing
 
-```math
+$
 index_{julia} = index_{elf} + 1
-```
+$
 
-**Relocation value computation**:
-```math
+_Relocation value computation_:
+$
 relocate(entry) = \begin{cases}
 symbol\_addr + addend & \text{if R\_X86\_64\_64} \\
 symbol\_addr + addend - (target\_addr + 4) & \text{if R\_X86\_64\_PC32} \\
 symbol\_addr + addend - (target\_addr + 4) & \text{if R\_X86\_64\_PLT32}
 \end{cases}
-```
+$
 
-**Direct code correspondence**:
+_Direct code correspondence_:
 ```julia
-# Mathematical model: perform_relocation: DynamicLinker × ElfFile × RelocationEntry → DynamicLinker
+= Mathematical model: perform_relocation: DynamicLinker × ElfFile × RelocationEntry → DynamicLinker
 function perform_relocation!(linker::DynamicLinker, elf_file::ElfFile, relocation::RelocationEntry)
     sym_index = elf64_r_sym(relocation.info)      # ↔ extract symbol index
     
@@ -203,28 +203,28 @@ function perform_relocation!(linker::DynamicLinker, elf_file::ElfFile, relocatio
 end
 ```
 
-## Complexity Analysis
+== Complexity Analysis
 
-```math
+$
 \begin{align}
 T_{symbol\_resolution}(n,m) &= O(n \cdot m) \quad \text{– Symbol lookup in object tables} \\
 T_{memory\_allocation}(k) &= O(k \log k) \quad \text{– Sorted region management} \\
 T_{relocation}(r) &= O(r) \quad \text{– Linear relocation processing} \\
 T_{total\_linking}(n,m,r) &= O(n \cdot m + r + k \log k) \quad \text{– Combined operations}
 \end{align}
-```
+$
 
-**Critical path**: Symbol resolution with O(n·m) complexity for cross-object lookups.
+_Critical path_: Symbol resolution with O(n·m) complexity for cross-object lookups.
 
-## Transformation Pipeline
+== Transformation Pipeline
 
-```math
+$
 objects \xrightarrow{load} linker\_state \xrightarrow{resolve} resolved\_symbols \xrightarrow{relocate} executable\_image
-```
+$
 
-**Code pipeline correspondence**:
+_Code pipeline correspondence_:
 ```julia
-# Mathematical pipeline: objects → linker_state → resolved_symbols → executable
+= Mathematical pipeline: objects → linker_state → resolved_symbols → executable
 function link_to_executable(object_files::Vector{String}, output_name::String)::Bool
     linker = DynamicLinker()                       # ↔ state initialization
     
@@ -245,43 +245,43 @@ function link_to_executable(object_files::Vector{String}, output_name::String)::
 end
 ```
 
-## Set-Theoretic Operations
+== Set-Theoretic Operations
 
-**Symbol collection**:
-```math
+_Symbol collection_:
+$
 global\_symbols = \bigcup_{obj \in objects} symbols(obj)
-```
+$
 
-**Undefined symbol filtering**:
-```math
+_Undefined symbol filtering_:
+$
 undefined = \{s \in global\_symbols : \neg defined(s)\}
-```
+$
 
-**Memory region union**:
-```math
+_Memory region union_:
+$
 total\_memory = \bigcup_{region \in memory\_regions} [region.base, region.base + region.size)
-```
+$
 
-## Invariant Preservation
+== Invariant Preservation
 
-```math
+$
 \text{Symbol uniqueness: }
 \forall s_1, s_2 \in global\_symbols: s_1.name = s_2.name \implies s_1.address = s_2.address
-```
+$
 
-```math
+$
 \text{Memory safety: }
 \forall m_1, m_2 \in memory\_regions: m_1 \neq m_2 \implies disjoint(m_1, m_2)
-```
+$
 
-```math
+$
 \text{Relocation correctness: }
 \forall r \in relocations: applied(r) \implies valid\_target\_address(r)
-```
+$
 
-## Optimization Trigger Points
+== Optimization Trigger Points
 
-- **Inner loops**: Symbol resolution with O(n·m) nested iteration
-- **Memory allocation**: Region sorting and search optimization opportunities
-- **Bottleneck operations**: Cross-object symbol lookup with hash table potential
-- **Invariant preservation**: Memory overlap checking with spatial data structures
+- _Inner loops_: Symbol resolution with O(n·m) nested iteration
+- _Memory allocation_: Region sorting and search optimization opportunities
+- _Bottleneck operations_: Cross-object symbol lookup with hash table potential
+- _Invariant preservation_: Memory overlap checking with spatial data structures

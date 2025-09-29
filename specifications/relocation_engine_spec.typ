@@ -1,49 +1,49 @@
-# Relocation Engine Mathematical Specification
+= Relocation Engine Mathematical Specification
 
-## Overview
+== Overview
 
 This specification defines the mathematical model for ELF relocation processing in the MiniElfLinker. Following the Mathematical-Driven AI Development methodology, relocation algorithms are expressed mathematically with direct code correspondence, enabling precise understanding and optimization analysis.
 
-## Mathematical Model
+== Mathematical Model
 
-### Relocation Mathematical Framework
+=== Relocation Mathematical Framework
 
-**Universe of Relocations**: The complete set of possible relocations in x86-64 architecture
-```math
+_Universe of Relocations_: The complete set of possible relocations in x86-64 architecture
+$
 \mathcal{R}_{universe} = \{R\_X86\_64\_i : i \in [0, 37]\}
-```
+$
 
-**Implemented Relocation Subset**: Currently supported relocations
-```math
+_Implemented Relocation Subset_: Currently supported relocations
+$
 \mathcal{R}_{implemented} \subseteq \mathcal{R}_{universe}
-```
+$
 
-**Relocation Entry Representation**:
-```math
+_Relocation Entry Representation_:
+$
 r \in \mathcal{R}_{entry} = \{offset, info, addend\}
-```
+$
 where:
 - $offset \in \mathbb{N}_{64}$: target memory address
 - $info \in \mathbb{N}_{64}$: packed symbol index and relocation type
 - $addend \in \mathbb{Z}_{64}$: signed constant value
 
-### Relocation Processing Function
+=== Relocation Processing Function
 
-**Primary Relocation Function**:
-```math
+_Primary Relocation Function_:
+$
 \Phi_{relocate}: \mathcal{R}_{entry} \times \mathcal{L}_{state} \to \mathcal{L}_{state}' \cup \{\text{Error}\}
-```
+$
 
-**Type Extraction Functions**:
-```math
+_Type Extraction Functions_:
+$
 \begin{align}
 \text{type}(r) &= r.info \bmod 2^{32} \\
 \text{symbol\_index}(r) &= \lfloor r.info / 2^{32} \rfloor
 \end{align}
-```
+$
 
-**Handler Dispatch Function**:
-```math
+_Handler Dispatch Function_:
+$
 \text{dispatch}(r) = \begin{cases}
 \Phi_{64}(r) & \text{if } \text{type}(r) = R\_X86\_64\_64 \\
 \Phi_{PC32}(r) & \text{if } \text{type}(r) = R\_X86\_64\_PC32 \\
@@ -51,25 +51,25 @@ where:
 \vdots \\
 \text{Error} & \text{if } \text{type}(r) \notin \mathcal{R}_{implemented}
 \end{cases}
-```
+$
 
-## Specific Relocation Algorithms
+== Specific Relocation Algorithms
 
-### Direct 64-bit Address Relocation
+=== Direct 64-bit Address Relocation
 
-**Mathematical Model**: $\Phi_{64}: \mathcal{R}_{entry} \to \mathcal{M}_{patch}$
+_Mathematical Model_: $\Phi_{64}: \mathcal{R}_{entry} \to \mathcal{M}_{patch}$
 
-**Address Computation**:
-```math
+_Address Computation_:
+$
 \text{target\_value} = \text{symbol\_address} + r.addend
-```
+$
 
-**Memory Patch Operation**:
-```math
+_Memory Patch Operation_:
+$
 \mathcal{M}[r.offset : r.offset + 8] \leftarrow \text{little\_endian}(\text{target\_value})
-```
+$
 
-**Implementation Correspondence**:
+_Implementation Correspondence_:
 ```julia
 """
 Mathematical model: Φ₆₄: ℛ_entry → ℳ_patch
@@ -94,25 +94,25 @@ function apply_relocation!(handler::Direct64Handler, relocation::RelocationEntry
 end
 ```
 
-### PC-Relative 32-bit Relocation
+=== PC-Relative 32-bit Relocation
 
-**Mathematical Model**: $\Phi_{PC32}: \mathcal{R}_{entry} \to \mathcal{M}_{patch}$
+_Mathematical Model_: $\Phi_{PC32}: \mathcal{R}_{entry} \to \mathcal{M}_{patch}$
 
-**Relative Address Computation**:
-```math
+_Relative Address Computation_:
+$
 \begin{align}
 \text{pc\_address} &= r.offset + 4 \\
 \text{displacement} &= (\text{symbol\_address} + r.addend) - \text{pc\_address} \\
 \text{target\_value} &= \text{sign\_extend\_32}(\text{displacement})
 \end{align}
-```
+$
 
-**Overflow Check**:
-```math
+_Overflow Check_:
+$
 \text{valid} = \text{displacement} \in [-2^{31}, 2^{31} - 1]
-```
+$
 
-**Implementation Correspondence**:
+_Implementation Correspondence_:
 ```julia
 """
 Mathematical model: Φ_PC32: ℛ_entry → ℳ_patch
@@ -143,25 +143,25 @@ function apply_relocation!(handler::PC32Handler, relocation::RelocationEntry, li
 end
 ```
 
-### PLT32 Relocation (Procedure Linkage Table)
+=== PLT32 Relocation (Procedure Linkage Table)
 
-**Mathematical Model**: $\Phi_{PLT32}: \mathcal{R}_{entry} \to \mathcal{PLT} \to \mathcal{M}_{patch}$
+_Mathematical Model_: $\Phi_{PLT32}: \mathcal{R}_{entry} \to \mathcal{PLT} \to \mathcal{M}_{patch}$
 
-**PLT Entry Creation**:
-```math
+_PLT Entry Creation_:
+$
 \text{plt\_entry} = \text{create\_plt\_entry}(\text{symbol\_name}, \text{got\_offset})
-```
+$
 
-**Relative Jump Computation**:
-```math
+_Relative Jump Computation_:
+$
 \begin{align}
 \text{plt\_address} &= \text{base\_plt} + \text{plt\_offset} \\
 \text{pc\_address} &= r.offset + 4 \\
 \text{displacement} &= \text{plt\_address} - \text{pc\_address}
 \end{align}
-```
+$
 
-**Implementation Correspondence**:
+_Implementation Correspondence_:
 ```julia
 """
 Mathematical model: Φ_PLT32: ℛ_entry → 𝒫ℒ𝒯 → ℳ_patch
@@ -193,26 +193,26 @@ function apply_relocation!(handler::PLT32Handler, relocation::RelocationEntry, l
 end
 ```
 
-## Global Offset Table (GOT) Support
+== Global Offset Table (GOT) Support
 
-### GOT Mathematical Framework
+=== GOT Mathematical Framework
 
-**GOT Entry Space**:
-```math
+_GOT Entry Space_:
+$
 \mathcal{GOT} = \{got\_entry_i : i \in [0, n_{symbols}]\}
-```
+$
 
-**GOT Address Resolution**:
-```math
+_GOT Address Resolution_:
+$
 \text{got\_address}(symbol) = \text{base\_got} + \text{got\_offset}(symbol)
-```
+$
 
-**GOT32 Relocation Algorithm**:
-```math
+_GOT32 Relocation Algorithm_:
+$
 \Phi_{GOT32}: \mathcal{R}_{entry} \to \mathcal{GOT} \to \mathcal{M}_{patch}
-```
+$
 
-**Implementation Correspondence**:
+_Implementation Correspondence_:
 ```julia
 """
 Mathematical model: Φ_GOT32: ℛ_entry → 𝒢ℴ𝒯 → ℳ_patch
@@ -236,26 +236,26 @@ function apply_relocation!(handler::GOT32Handler, relocation::RelocationEntry, l
 end
 ```
 
-## Dispatcher Architecture
+== Dispatcher Architecture
 
-### Relocation Type Registry
+=== Relocation Type Registry
 
-**Handler Registry**:
-```math
+_Handler Registry_:
+$
 \mathcal{H} = \{(type, handler) : type \in \mathcal{R}_{implemented}, handler \in \text{HandlerImplementations}\}
-```
+$
 
-**Dispatch Function**:
-```math
+_Dispatch Function_:
+$
 \text{dispatch}(r) = \mathcal{H}[\text{type}(r)] \text{ if } \text{type}(r) \in \text{keys}(\mathcal{H})
-```
+$
 
-**Error Handling**:
-```math
+_Error Handling_:
+$
 \text{unsupported}(r) = \text{type}(r) \notin \text{keys}(\mathcal{H})
-```
+$
 
-**Implementation Correspondence**:
+_Implementation Correspondence_:
 ```julia
 """
 Mathematical model: Dispatcher = {handler_i}_{i=0}^{37}
@@ -297,24 +297,24 @@ function apply_relocation!(dispatcher::RelocationDispatcher, relocation::Relocat
 end
 ```
 
-## Error Handling and Recovery
+== Error Handling and Recovery
 
-### Error Categories
+=== Error Categories
 
-**Relocation Error Space**:
-```math
+_Relocation Error Space_:
+$
 \mathcal{E}_{relocation} = \mathcal{E}_{unsupported} \cup \mathcal{E}_{overflow} \cup \mathcal{E}_{symbol} \cup \mathcal{E}_{memory}
-```
+$
 
-**Error Recovery Function**:
-```math
+_Error Recovery Function_:
+$
 \text{recover}(error) = \begin{cases}
 \text{skip} & \text{if } error \in \mathcal{E}_{recoverable} \\
 \text{abort} & \text{if } error \in \mathcal{E}_{fatal}
 \end{cases}
-```
+$
 
-**Implementation Correspondence**:
+_Implementation Correspondence_:
 ```julia
 """
 Mathematical model: Error handling with recovery strategies.
@@ -340,29 +340,29 @@ function safe_apply_relocation!(dispatcher::RelocationDispatcher, relocation::Re
 end
 ```
 
-## Memory Management
+== Memory Management
 
-### Memory Patch Operations
+=== Memory Patch Operations
 
-**Memory State Representation**:
-```math
+_Memory State Representation_:
+$
 \mathcal{M} = \{addr \to value : addr \in \text{AllocatedMemory}\}
-```
+$
 
-**Patch Functions**:
-```math
+_Patch Functions_:
+$
 \begin{align}
 \text{patch\_32}(addr, value) &: \mathcal{M} \to \mathcal{M}' \\
 \text{patch\_64}(addr, value) &: \mathcal{M} \to \mathcal{M}'
 \end{align}
-```
+$
 
-**Endianness Conversion**:
-```math
+_Endianness Conversion_:
+$
 \text{little\_endian}(value) = \sum_{i=0}^{n-1} \text{byte}_i \cdot 256^i
-```
+$
 
-**Implementation Correspondence**:
+_Implementation Correspondence_:
 ```julia
 """
 Mathematical model: Memory patch operations with endianness handling.
@@ -397,75 +397,75 @@ function patch_memory_64bit!(linker_state, offset::UInt64, value::UInt64)
 end
 ```
 
-## Complexity Analysis
+== Complexity Analysis
 
-### Time Complexity
+=== Time Complexity
 
-```math
+$
 \begin{align}
 T_{dispatch}(1) &= O(1) \quad \text{– Hash table lookup} \\
 T_{relocation}(r) &= O(1) \quad \text{– Per relocation processing} \\
 T_{total}(n) &= O(n) \quad \text{– Linear in relocation count}
 \end{align}
-```
+$
 
-### Space Complexity
+=== Space Complexity
 
-```math
+$
 \begin{align}
 S_{handlers} &= O(|\mathcal{R}_{implemented}|) \quad \text{– Handler registry} \\
 S_{got} &= O(n_{external\_symbols}) \quad \text{– GOT entries} \\
 S_{plt} &= O(n_{function\_calls}) \quad \text{– PLT entries}
 \end{align}
-```
+$
 
-## Optimization Opportunities
+== Optimization Opportunities
 
-### Batch Processing
+=== Batch Processing
 
-**Current**: Sequential relocation processing
-```math
+_Current_: Sequential relocation processing
+$
 T_{current} = \sum_{i=1}^{n} T_{relocation}(r_i)
-```
+$
 
-**Optimized**: Batch relocations by type
-```math
+_Optimized_: Batch relocations by type
+$
 T_{batched} = \sum_{type \in \mathcal{R}_{types}} T_{batch}(|\{r : \text{type}(r) = type\}|)
-```
+$
 
-### Memory Layout Optimization
+=== Memory Layout Optimization
 
-**Spatial Locality**: Group relocations by memory region
-```math
+_Spatial Locality_: Group relocations by memory region
+$
 \text{region\_groups} = \{r \in \mathcal{R} : \text{region}(r.offset) = region_i\}
-```
+$
 
-### Jump Table Optimization
+=== Jump Table Optimization
 
-**Dynamic Dispatch**: Replace hash table with jump table for critical path
-```math
+_Dynamic Dispatch_: Replace hash table with jump table for critical path
+$
 T_{jump\_table} = O(1) \text{ worst-case vs } O(1) \text{ average-case hash}
-```
+$
 
-## Integration Points
+== Integration Points
 
-### Symbol Resolution Interface
+=== Symbol Resolution Interface
 
-```math
+$
 \text{resolve\_symbol}: \text{SymbolIndex} \times \mathcal{L}_{state} \to \text{SymbolAddress} \cup \{\perp\}
-```
+$
 
-### Memory Management Interface  
+=== Memory Management Interface  
 
-```math
+$
 \text{find\_region}: \text{Address} \times \mathcal{L}_{state} \to \text{MemoryRegion} \cup \{\perp\}
-```
+$
 
-### PLT/GOT Management Interface
+=== PLT/GOT Management Interface
 
-```math
+$
 \begin{align}
 \text{ensure\_plt}: \text{SymbolName} \times \mathcal{L}_{state} &\to \text{PLTEntry} \\
 \text{ensure\_got}: \text{SymbolName} \times \mathcal{L}_{state} &\to \text{GOTEntry}
 \end{align}
-```
+$
