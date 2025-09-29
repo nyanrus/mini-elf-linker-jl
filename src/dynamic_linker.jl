@@ -300,22 +300,60 @@ _start:
 ```
 """
 function inject_c_runtime_startup!(linker::DynamicLinker, main_address::UInt64)
-    # Place startup code in a proper location within text segment
-    # For PIE executables, entry points are typically around 0x4000-0x5000
-    base_address = 0x400000  # Standard base address
-    text_start = base_address + 0x1000  # Standard text segment start (4KB after base)
+    # Find executable text regions to place _start within them
+    text_regions = filter(r -> (r.permissions & 0x1) != 0, linker.memory_regions)  # Executable regions
     
-    # Find a safe location for _start within the text region
-    startup_address = text_start
-    if !isempty(linker.memory_regions)
-        # Look for text regions and find a suitable gap
-        text_regions = filter(r -> (r.permissions & 0x1) != 0, linker.memory_regions)  # Executable regions
-        if !isempty(text_regions)
-            # Find the first executable region and place _start just before it
-            min_text_addr = minimum(r.base_address for r in text_regions)
-            # Place _start just before the first executable region, with some padding
-            startup_address = max(text_start, min_text_addr - 0x100)  # 256 bytes before first text
+    if !isempty(text_regions)
+        # Find the first executable region and place _start at the beginning
+        min_text_addr = minimum(r.base_address for r in text_regions)
+        # Place _start at the start of the text segment
+        startup_address = min_text_addr
+        
+        # Move the existing code to make room for _start
+        # Find the region that starts at min_text_addr
+        text_region_index = findfirst(r -> r.base_address == min_text_addr, linker.memory_regions)
+        if text_region_index !== nothing
+            # Move the existing region's code 32 bytes forward to make room for _start
+            old_region = linker.memory_regions[text_region_index]
+            startup_code_size = 23  # Size of our _start function
+            new_base = old_region.base_address + startup_code_size
+            
+            # Update the region
+            linker.memory_regions[text_region_index] = MemoryRegion(
+                old_region.data,
+                new_base,
+                old_region.size,
+                old_region.permissions
+            )
+            
+            # Update symbol addresses that were in this region
+            for (name, symbol) in linker.global_symbol_table
+                if symbol.value >= old_region.base_address && 
+                   symbol.value < (old_region.base_address + old_region.size)
+                    # Update symbol address
+                    new_symbol = Symbol(
+                        symbol.name, symbol.value + startup_code_size, symbol.size,
+                        symbol.binding, symbol.type, symbol.section, symbol.defined, symbol.source_file
+                    )
+                    linker.global_symbol_table[name] = new_symbol
+                    println("Updated symbol '$name' address: 0x$(string(symbol.value, base=16)) -> 0x$(string(new_symbol.value, base=16))")
+                end
+            end
+            
+            # Update main_address if it was affected
+            if main_address >= old_region.base_address && 
+               main_address < (old_region.base_address + old_region.size)
+                main_address += startup_code_size
+            end
         end
+    else
+        # Fallback: place at standard text start
+        startup_address = 0x400000 + 0x1000
+    end
+    
+    # Get the updated main address from the symbol table if it exists
+    if haskey(linker.global_symbol_table, "main")
+        main_address = linker.global_symbol_table["main"].value
     end
     
     # Calculate relative call offset (main_address - (startup_address + call_instruction_offset))
@@ -974,8 +1012,12 @@ function link_to_executable(filenames::Vector{String}, output_filename::String;
             main_address = entry_symbol_info.value
             # Inject a minimal _start function that calls main properly
             entry_point = inject_c_runtime_startup!(linker, main_address)
+            
+            # Get updated main address after injection
+            updated_main_address = linker.global_symbol_table[entry_symbol].value
+            
             println("Entry point set to synthetic '_start' at 0x$(string(entry_point, base=16))")
-            println("  → Will call '$entry_symbol' at 0x$(string(main_address, base=16))")
+            println("  → Will call '$entry_symbol' at 0x$(string(updated_main_address, base=16))")
         else
             println("Warning: Entry symbol '$entry_symbol' is not defined, using default entry point")
         end
