@@ -100,8 +100,10 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
     
     program_headers = ProgramHeader[]
     
-    # Calculate base address - should be page-aligned
-    base_addr = 0x400000  # Standard base address
+    # For PIE executables, use base address 0x0 to allow relocation
+    # For traditional executables, use fixed base address 0x400000
+    pie_executable = !isempty(linker.dynamic_section.entries)
+    base_addr = pie_executable ? 0x0 : 0x400000
     
     # Add PT_PHDR program header FIRST (required for PIE executables)
     # This describes the program header table itself and MUST come before LOAD segments
