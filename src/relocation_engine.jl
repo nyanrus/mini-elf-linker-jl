@@ -154,9 +154,20 @@ function process_relocation(handler::PLT32Handler,
                           relocation::RelocationEntry,
                           linker)
     symbol_name = get_symbol_name(linker, relocation)
+    
+    # For PLT32 relocations, first try to get the PLT address for external symbols
     plt_address = get_plt_address(linker, symbol_name)  # L
-    place_address = get_relocation_place(linker, relocation)  # P
-    value = Int64(plt_address) + relocation.addend - Int64(place_address)  # L + A - P
+    
+    if plt_address != 0x0
+        # External symbol - use PLT entry
+        place_address = get_relocation_place(linker, relocation)  # P
+        value = Int64(plt_address) + relocation.addend - Int64(place_address)  # L + A - P
+    else
+        # Local symbol - use direct symbol address (same as PC32)
+        symbol_value = get_symbol_value(linker, relocation)  # S
+        place_address = get_relocation_place(linker, relocation)  # P
+        value = Int64(symbol_value) + relocation.addend - Int64(place_address)  # S + A - P
+    end
     
     apply_relocation_to_memory!(linker, relocation.offset, value, 4)
     return true
@@ -363,13 +374,10 @@ Mathematical model: place: RelocationEntry → Address
 Get the address where relocation is applied (P in ELF formulas).
 """
 function get_relocation_place(linker, relocation::RelocationEntry)
-    # Find the memory region containing this offset
-    for region in linker.memory_regions
-        if relocation.offset < region.size
-            return region.base_address + relocation.offset + 4  # +4 for PC-relative instructions
-        end
-    end
-    return 0x0
+    # For PC-relative relocations, P is the address after the instruction
+    # The relocation.offset is the virtual address where the relocation is applied
+    # For 32-bit PC-relative instructions, we need to add 4 to get the address after the instruction
+    return relocation.offset + 4
 end
 
 """
@@ -402,17 +410,22 @@ end
     apply_relocation_to_memory!(linker, offset::UInt64, value::Int64, size::Int)
 
 Apply relocation by patching memory region data.
+Find the correct memory region based on virtual address ranges.
 """
 function apply_relocation_to_memory!(linker, offset::UInt64, value::Int64, size::Int)
-    # Find appropriate memory region and apply patch
+    # Find appropriate memory region by virtual address
     for region in linker.memory_regions
-        if offset < region.size
-            apply_relocation_to_region!(region, offset, value, size)
+        region_start = region.base_address
+        region_end = region.base_address + region.size
+        
+        if region_start <= offset < region_end
+            # Convert virtual address to offset within the region
+            region_offset = offset - region_start
+            apply_relocation_to_region!(region, region_offset, value, size)
             return true
         end
-        offset -= region.size
     end
-    @warn "Could not find memory region for relocation at offset $offset"
+    @warn "Could not find memory region for relocation at virtual address 0x$(string(offset, base=16))"
     return false
 end
 

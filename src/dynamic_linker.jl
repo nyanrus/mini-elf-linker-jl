@@ -76,6 +76,10 @@ mutable struct DynamicLinker
     base_address::UInt64                               # ↔ α_base ∈ ℕ₆₄
     next_address::UInt64                               # ↔ α_next ∈ ℕ₆₄
     temp_files::Vector{String}                         # ↔ T cleanup set
+    
+    # Section mapping for relocation resolution
+    section_address_map::Dict{Tuple{String, UInt16}, UInt64}  # (filename, section_index) -> virtual_address
+    
     got::GlobalOffsetTable                             # ↔ Enhanced GOT structure
     plt::ProcedureLinkageTable                        # ↔ Enhanced PLT structure  
     relocation_dispatcher::RelocationDispatcher       # ↔ Complete relocation engine
@@ -97,7 +101,7 @@ function DynamicLinker(alpha_base::UInt64 = UInt64(0x400000))
     relocation_dispatcher = RelocationDispatcher()
     dynamic_section = DynamicSection()
     
-    # Initialize linker state: S_Δ = ⟨O, Σ, M, α_base, α_next, T, GOT, PLT, RelocationEngine, DynSection⟩
+    # Initialize linker state: S_Δ = ⟨O, Σ, M, α_base, α_next, T, SectionMap, GOT, PLT, RelocationEngine, DynSection⟩
     return DynamicLinker(
         ElfFile[],                    # ↔ O = ∅ (empty object set)
         Dict{String, Symbol}(),       # ↔ Σ = ∅ (empty symbol table)
@@ -105,6 +109,7 @@ function DynamicLinker(alpha_base::UInt64 = UInt64(0x400000))
         alpha_base,                   # ↔ α_base virtual memory base
         alpha_base,                   # ↔ α_next = α_base initially
         String[],                     # ↔ T = ∅ (empty temp files)
+        Dict{Tuple{String, UInt16}, UInt64}(),  # ↔ Section address mapping
         got,                          # ↔ Enhanced GOT structure
         plt,                          # ↔ Enhanced PLT structure
         relocation_dispatcher,        # ↔ Complete relocation engine
@@ -519,9 +524,17 @@ Memory allocation constraint:
 Address computation: α_next' = max_{m ∈ M'} (α_base(m) + size(m))
 """
 function allocate_memory_regions!(linker::DynamicLinker)
-    # Current address tracking: α_current = α_next
-    alpha_current = linker.next_address                     # ↔ α_current initialization
-    section_address_map = Dict{Tuple{String, UInt16}, UInt64}()  # Section → address mapping
+    # Calculate space needed for ELF headers and program headers
+    # ELF header: 64 bytes
+    # Program headers: estimated 5 segments × 56 bytes = 280 bytes  
+    # Round up for safety: 64 + 280 = 344 → round to 512 bytes (0x200)
+    headers_size = UInt64(0x200)
+    
+    # Current address tracking: α_current = α_base + headers_size (start after headers)
+    alpha_current = linker.base_address + headers_size
+    
+    # Update linker's next_address to skip headers
+    linker.next_address = alpha_current
     
     # Iterate over all loaded objects: ∀o ∈ O
     for elf_file in linker.loaded_objects
@@ -533,7 +546,7 @@ function allocate_memory_regions!(linker::DynamicLinker)
                 
                 # Section address mapping: (filename, index) ↦ α_aligned
                 elf_section_index = UInt16(section_idx - 1)  # ↔ 0-based indexing correction
-                section_address_map[(elf_file.filename, elf_section_index)] = alpha_aligned
+                linker.section_address_map[(elf_file.filename, elf_section_index)] = alpha_aligned
                 
                 # Create memory region: m = ⟨data, α_base, size, permissions⟩
                 region = MemoryRegion(
@@ -675,7 +688,7 @@ function allocate_memory_regions!(linker::DynamicLinker)
     linker.next_address = alpha_current
     
     # Update symbol addresses to be absolute
-    update_symbol_addresses!(linker, section_address_map)
+    update_symbol_addresses!(linker, linker.section_address_map)
 end
 
 """
@@ -758,10 +771,40 @@ Perform relocations for all loaded objects using enhanced relocation engine.
 function perform_relocations!(linker::DynamicLinker)
     for elf_file in linker.loaded_objects
         for relocation in elf_file.relocations
-            if !apply_relocation!(linker.relocation_dispatcher, relocation, linker)
+            # Convert section-relative offset to virtual address
+            virtual_offset = get_relocation_virtual_address(linker, elf_file, relocation)
+            
+            # Create a virtual relocation with the correct virtual address
+            virtual_relocation = RelocationEntry(
+                virtual_offset,
+                relocation.info,
+                relocation.addend,
+                relocation.target_section_index
+            )
+            
+            if !apply_relocation!(linker.relocation_dispatcher, virtual_relocation, linker)
                 error("Failed to apply relocation of type $(elf64_r_type(relocation.info))")
             end
         end
+    end
+end
+
+"""
+    get_relocation_virtual_address(linker::DynamicLinker, elf_file::ElfFile, relocation::RelocationEntry) -> UInt64
+
+Convert a section-relative relocation offset to a virtual address.
+"""
+function get_relocation_virtual_address(linker::DynamicLinker, elf_file::ElfFile, relocation::RelocationEntry)
+    # Find the virtual address of the target section
+    section_key = (elf_file.filename, relocation.target_section_index)
+    
+    if haskey(linker.section_address_map, section_key)
+        section_base_address = linker.section_address_map[section_key]
+        return section_base_address + relocation.offset
+    else
+        # Fallback for sections not in the map (might be absolute address)
+        @warn "Could not find section mapping for relocation in $(elf_file.filename), section $(relocation.target_section_index)"
+        return relocation.offset
     end
 end
 
