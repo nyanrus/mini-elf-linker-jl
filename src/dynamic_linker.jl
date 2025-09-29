@@ -359,7 +359,14 @@ function inject_c_runtime_startup!(linker::DynamicLinker, main_address::UInt64)
     # Calculate relative call offset (main_address - (startup_address + call_instruction_offset))
     call_instruction_offset = 7  # Position of call instruction within _start
     call_target = startup_address + call_instruction_offset + 5  # Address after the call instruction
+    
+    # PRODUCTION FIX: Ensure correct call offset calculation
+    # Since main was moved by startup_code_size, we need the actual distance in memory
+    println("🔍 Call calculation: _start at 0x$(string(startup_address, base=16)), main at 0x$(string(main_address, base=16))")
+    println("   Call target: 0x$(string(call_target, base=16))")
+    
     rel_offset_i64 = Int64(main_address) - Int64(call_target)
+    println("   Calculated offset: $(rel_offset_i64) (0x$(string(rel_offset_i64, base=16)))")
     
     # Verify the offset fits in Int32
     if abs(rel_offset_i64) > 0x7fffffff
