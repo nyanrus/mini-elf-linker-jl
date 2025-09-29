@@ -101,4 +101,15 @@ link_to_executable(["file1.o", "file2.o"], "program",
                    entry_symbol="main")
 ```
 
+## AI Playground
+
+This repository includes an **AI Playground** directory (`ai-playground/`) containing AI-generated test files, experimental scripts, and development iterations. This space allows for:
+
+- AI-assisted development experiments
+- Testing new features and approaches
+- Learning from previous development iterations
+- Safe experimentation without cluttering the main repository
+
+All files in the AI playground (except the README) are gitignored, making it a perfect space for AI development work while keeping the main project structure clean and focused.
+
 Have a nice day!

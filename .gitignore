@@ -21,3 +21,7 @@ test_output
 # TinyCC source and build artifacts
 tinycc_source/
 tinycc_build/
+
+# AI Playground - exclude everything except README.md
+ai-playground/*
+!ai-playground/README.md
