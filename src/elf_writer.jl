@@ -225,13 +225,15 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
         end
         
         if dynamic_region !== nothing
-            # Calculate dynamic section file offset
-            dynamic_offset = UInt64(0x2000)  # Standard offset for dynamic section
+            # Calculate dynamic section file offset based on virtual address mapping
+            # The dynamic section offset will be calculated later in write_elf_executable
+            # For now, use placeholder offset that will be corrected later
+            dynamic_offset = UInt64(0)  # Placeholder - will be calculated in write phase
             
             push!(program_headers, ProgramHeader(
                 PT_DYNAMIC,                # type
                 PF_R | PF_W,              # flags (Read + Write for runtime updates)
-                dynamic_offset,            # offset in file
+                dynamic_offset,            # offset in file (to be calculated later)
                 dynamic_region.base_address, # virtual address
                 dynamic_region.base_address, # physical address
                 dynamic_region.size,       # size in file
@@ -297,8 +299,31 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
                     )
                     current_offset += ph.filesz
                 end
+            elseif ph.type == PT_DYNAMIC
+                # Calculate dynamic segment offset within its containing LOAD segment
+                # Find which LOAD segment contains this virtual address
+                containing_load = nothing
+                for load_ph in program_headers
+                    if load_ph.type == PT_LOAD && 
+                       ph.vaddr >= load_ph.vaddr && 
+                       ph.vaddr < (load_ph.vaddr + load_ph.memsz)
+                        containing_load = load_ph
+                        break
+                    end
+                end
+                
+                if containing_load !== nothing
+                    # Calculate offset within the LOAD segment
+                    offset_in_segment = ph.vaddr - containing_load.vaddr
+                    dynamic_file_offset = containing_load.offset + offset_in_segment
+                    
+                    program_headers[i] = ProgramHeader(
+                        ph.type, ph.flags, dynamic_file_offset, ph.vaddr, ph.paddr,
+                        ph.filesz, ph.memsz, ph.align
+                    )
+                end
             end
-            # Non-LOAD segments (like GNU_STACK, PHDR, INTERP) keep their original offsets
+            # Other segments (GNU_STACK, PHDR, INTERP) keep their original offsets
         end
         
         # Create ELF header for executable
