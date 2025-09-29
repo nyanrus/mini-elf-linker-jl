@@ -10,6 +10,7 @@ export LinkerOptions, parse_arguments, show_help, show_version, execute_linker, 
 export GlobalOffsetTable, ProcedureLinkageTable, PLTEntry, create_plt_entry, create_plt_resolver_entry
 export RelocationDispatcher, RelocationHandler, apply_relocation!, UnsupportedRelocationError
 export DynamicSection, DynamicEntry, add_needed_library!, finalize_dynamic_section!
+export ELFValidator, ValidationResult, validate_elf_file, quick_validate, print_validation_report
 
 include("elf_format.jl")
 include("elf_parser.jl")
@@ -18,6 +19,7 @@ include("relocation_engine.jl")
 include("dynamic_linker.jl")
 include("elf_writer.jl")
 include("library_support.jl")
+include("elf_validation.jl")
 include("cli.jl")
 
 end # module MiniElfLinker
