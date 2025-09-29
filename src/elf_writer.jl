@@ -111,8 +111,8 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
         PT_PHDR,                    # type
         PF_R,                      # flags (Read only)
         UInt64(elf_header_size),   # offset (right after ELF header)
-        base_addr + UInt64(elf_header_size), # vaddr
-        base_addr + UInt64(elf_header_size), # paddr
+        UInt64(elf_header_size),   # vaddr (offset from first LOAD segment base)
+        UInt64(elf_header_size),   # paddr
         UInt64(ph_table_size),     # filesz (size of program header table)
         UInt64(ph_table_size),     # memsz
         0x8                        # align (8-byte alignment)
@@ -125,7 +125,7 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
         PT_LOAD,                    # type
         PF_R,                      # flags (Read only - headers should not be executable!)
         0,                         # offset (starts at file beginning)
-        base_addr,                 # vaddr (0x400000)
+        base_addr,                 # vaddr (base address - covers PHDR range)
         base_addr,                 # paddr
         UInt64(max(0x1000, headers_end)), # filesz (at least 4KB to cover headers)
         UInt64(max(0x1000, headers_end)), # memsz
@@ -256,6 +256,22 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
         0,                         # memsz (not applicable for GNU_STACK)
         0x10                       # align (16-byte alignment)
     ))
+    
+    # Add GNU_RELRO program header for basic RELRO support (simplified implementation)
+    if !isempty(linker.dynamic_section.entries) && !isempty(data_regions)
+        # Simple RELRO implementation - protect the first writable segment that likely contains GOT
+        first_data_region = data_regions[1]
+        push!(program_headers, ProgramHeader(
+            PT_GNU_RELRO,          # type
+            PF_R,                  # flags (read-only after relocation)
+            0,                     # offset (will be calculated later)
+            first_data_region.base_address,  # vaddr
+            first_data_region.base_address,  # paddr
+            first_data_region.size,          # filesz
+            first_data_region.size,          # memsz
+            0x1000                 # align (4KB)
+        ))
+    end
     
     return program_headers
 end
