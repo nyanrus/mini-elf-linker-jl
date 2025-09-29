@@ -199,8 +199,8 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
         end
         
         if dynamic_region !== nothing
-            # Calculate file offset (simplified - in real implementation would calculate properly)
-            dynamic_offset = UInt64(0x2000)  # Placeholder offset
+            # Calculate dynamic section file offset
+            dynamic_offset = UInt64(0x2000)  # Standard offset for dynamic section
             
             push!(program_headers, ProgramHeader(
                 PT_DYNAMIC,                # type

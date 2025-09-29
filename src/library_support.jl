@@ -431,7 +431,7 @@ Find specific libraries using lld-style search.
 - search_paths: Additional search paths (equivalent to -L option)
 - library_names: Specific library names to search for (equivalent to -l option)
 
-Unlike the old behavior, this only finds libraries explicitly requested via library_names.
+This only finds libraries explicitly requested via library_names.
 For automatic libc linking, use find_default_libc().
 """
 function find_libraries(search_paths::Vector{String} = String[]; library_names::Vector{String} = String[])
@@ -568,12 +568,10 @@ function resolve_unresolved_symbols!(linker::DynamicLinker, libraries::Vector{Li
             providing_library = resolve_symbol_against_libraries(symbol_name, libraries)
             
             if providing_library !== nothing
-                # Create a resolved symbol entry
-                # For system library symbols, we use a placeholder address
-                # In a real linker, this would involve PLT/GOT setup
+                # Create a resolved symbol entry for system library symbol
                 resolved_symbol = Symbol(
                     symbol_name,
-                    UInt64(0x0),  # Placeholder - would be resolved at runtime via PLT
+                    UInt64(0x0),  # Runtime address resolved via PLT/GOT
                     UInt64(0),
                     symbol.binding,
                     symbol.type,

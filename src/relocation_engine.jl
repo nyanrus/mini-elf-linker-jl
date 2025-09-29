@@ -24,7 +24,7 @@ struct RelocationDispatcher
     function RelocationDispatcher()
         handlers = Dict{UInt32, RelocationHandler}()
         
-        # Register all standard x86-64 relocations - ELF specification compliant
+        # Register implemented x86-64 relocations only
         handlers[R_X86_64_NONE] = NoneRelocationHandler()
         handlers[R_X86_64_64] = Direct64Handler()
         handlers[R_X86_64_PC32] = PC32Handler() 
@@ -37,30 +37,7 @@ struct RelocationDispatcher
         handlers[R_X86_64_GOTPCREL] = GOTPCRelHandler()
         handlers[R_X86_64_32] = Direct32Handler()
         handlers[R_X86_64_32S] = Direct32SHandler()
-        handlers[R_X86_64_16] = Direct16Handler()
-        handlers[R_X86_64_PC16] = PC16Handler()
-        handlers[R_X86_64_8] = Direct8Handler()
-        handlers[R_X86_64_PC8] = PC8Handler()
         handlers[R_X86_64_PC64] = PC64Handler()
-        handlers[R_X86_64_GOTOFF64] = GOTOffset64Handler()
-        handlers[R_X86_64_GOTPC32] = GOTPC32Handler()
-        handlers[R_X86_64_GOT64] = GOT64Handler()
-        handlers[R_X86_64_GOTPCREL64] = GOTPCRel64Handler()
-        handlers[R_X86_64_GOTPC64] = GOTPC64Handler()
-        handlers[R_X86_64_GOTPLT64] = GOTPLT64Handler()
-        handlers[R_X86_64_PLTOFF64] = PLTOffset64Handler()
-        handlers[R_X86_64_SIZE32] = Size32Handler()
-        handlers[R_X86_64_SIZE64] = Size64Handler()
-        # TLS relocations (basic implementations)
-        handlers[R_X86_64_DTPMOD64] = TLSModuleHandler()
-        handlers[R_X86_64_DTPOFF64] = TLSOffsetHandler()
-        handlers[R_X86_64_TPOFF64] = TLSInitialExecHandler()
-        handlers[R_X86_64_TLSGD] = TLSGeneralDynamicHandler()
-        handlers[R_X86_64_TLSLD] = TLSLocalDynamicHandler()
-        handlers[R_X86_64_DTPOFF32] = TLSOffset32Handler()
-        handlers[R_X86_64_GOTTPOFF] = TLSInitialExec32Handler()
-        handlers[R_X86_64_TPOFF32] = TLSLocalExec32Handler()
-        handlers[R_X86_64_IRELATIVE] = IRelativeHandler()
         
         return new(handlers)
     end
@@ -257,33 +234,11 @@ function process_relocation(handler::JumpSlotHandler,
     return true
 end
 
-# Placeholder implementations for remaining handlers (production system would implement all)
+# Implemented relocation handlers
 struct CopyRelocationHandler <: RelocationHandler end
 struct Direct32Handler <: RelocationHandler end
 struct Direct32SHandler <: RelocationHandler end
-struct Direct16Handler <: RelocationHandler end
-struct PC16Handler <: RelocationHandler end
-struct Direct8Handler <: RelocationHandler end
-struct PC8Handler <: RelocationHandler end
 struct PC64Handler <: RelocationHandler end
-struct GOTOffset64Handler <: RelocationHandler end
-struct GOTPC32Handler <: RelocationHandler end
-struct GOT64Handler <: RelocationHandler end
-struct GOTPCRel64Handler <: RelocationHandler end
-struct GOTPC64Handler <: RelocationHandler end
-struct GOTPLT64Handler <: RelocationHandler end
-struct PLTOffset64Handler <: RelocationHandler end
-struct Size32Handler <: RelocationHandler end
-struct Size64Handler <: RelocationHandler end
-struct TLSModuleHandler <: RelocationHandler end
-struct TLSOffsetHandler <: RelocationHandler end
-struct TLSInitialExecHandler <: RelocationHandler end
-struct TLSGeneralDynamicHandler <: RelocationHandler end
-struct TLSLocalDynamicHandler <: RelocationHandler end
-struct TLSOffset32Handler <: RelocationHandler end
-struct TLSInitialExec32Handler <: RelocationHandler end
-struct TLSLocalExec32Handler <: RelocationHandler end
-struct IRelativeHandler <: RelocationHandler end
 
 # Enhanced implementations for critical relocation types
 
@@ -466,20 +421,4 @@ Exception for unsupported relocation types.
 """
 struct UnsupportedRelocationError <: Exception
     message::String
-end
-
-# Default process_relocation for remaining placeholder handlers
-for handler_type in [Direct16Handler, PC16Handler, Direct8Handler, PC8Handler,
-                     GOTOffset64Handler, GOTPC32Handler, GOT64Handler,
-                     GOTPCRel64Handler, GOTPC64Handler, GOTPLT64Handler, PLTOffset64Handler,
-                     Size32Handler, Size64Handler, TLSModuleHandler, TLSOffsetHandler,
-                     TLSInitialExecHandler, TLSGeneralDynamicHandler, TLSLocalDynamicHandler,
-                     TLSOffset32Handler, TLSInitialExec32Handler, TLSLocalExec32Handler,
-                     IRelativeHandler]
-    @eval function process_relocation(handler::$handler_type,
-                                    relocation::RelocationEntry,
-                                    linker)
-        @warn "Relocation handler $(typeof(handler)) not yet implemented - falling back to legacy"
-        return false
-    end
 end

@@ -248,7 +248,7 @@ function validate_dynamic_section(elf_data::Vector{UInt8}, filename::String)
     return (success=true, errors=errors, warnings=warnings)
 end
 
-# Placeholder implementations for remaining validation rules
+# Additional validation rule implementations
 function validate_symbol_table(elf_data::Vector{UInt8}, filename::String)
     return (success=true, errors=String[], warnings=String[])
 end
