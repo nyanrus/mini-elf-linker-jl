@@ -617,12 +617,19 @@ function allocate_memory_regions!(linker::DynamicLinker)
         dynamic_size = UInt64(length(linker.dynamic_section.entries) * 16)  # 16 bytes per entry
         alpha_current = dynamic_base + dynamic_size
         
-        # Serialize dynamic entries to binary format
-        dynamic_data = UInt8[]
+        # Serialize dynamic entries to binary format using direct byte writing
+        dynamic_data = Vector{UInt8}()
+        sizehint!(dynamic_data, length(linker.dynamic_section.entries) * 16)
+        
         for entry in linker.dynamic_section.entries
-            # Append tag (8 bytes) and value (8 bytes) in little-endian
-            append!(dynamic_data, reinterpret(UInt8, [entry.tag]))
-            append!(dynamic_data, reinterpret(UInt8, [entry.value]))
+            # Write tag as 8-byte little-endian
+            for i in 0:7
+                push!(dynamic_data, UInt8((entry.tag >> (8*i)) & 0xff))
+            end
+            # Write value as 8-byte little-endian
+            for i in 0:7
+                push!(dynamic_data, UInt8((entry.value >> (8*i)) & 0xff))
+            end
         end
         
         dynamic_region = MemoryRegion(
