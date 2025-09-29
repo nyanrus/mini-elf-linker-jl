@@ -1,25 +1,36 @@
 # Mini ELF Linker in Julia
 
-This is a study project implementing a basic ELF linker in Julia for educational purposes. The project aims to understand how dynamic linking works by building a simplified version of an ELF linker.
+This is a study project implementing a basic ELF linker in Julia for educational purposes. The project aims to understand how dynamic linking works by building a simplified version of an ELF linker with comprehensive mathematical documentation.
 
 **Note**: This project is AI-driven and developed for learning purposes. We are unable to accept pull requests at this time.
 
+## 📐 Mathematical Documentation
+
+This linker is documented using **Mathematical-Driven AI Development methodology** with humble, appropriate mathematical notations:
+
+- **[Complete Mathematical Specification](MATHEMATICAL_SPECIFICATION.md)** - Comprehensive mathematical framework
+- **[Mathematical-Driven Development Guide](README_DOCUMENTATION.md)** - Documentation structure and methodology
+
 ## What is this project?
 
-This is a simple implementation of an ELF (Executable and Linkable Format) linker written in Julia. It can:
+This is a mathematically-documented implementation of an ELF (Executable and Linkable Format) linker written in Julia. It demonstrates:
 
-- Parse ELF object files
-- Link multiple object files together
-- Generate executable ELF files
-- Resolve symbols between different object files
-- Work with system libraries like glibc
+**Algorithmic Components** (Mathematical Expression):
+- ELF parsing algorithms with mathematical transformations: $\Pi_{parse}: \text{BinaryFile} \to \mathcal{E}_{structured}$
+- Symbol resolution using set theory: $\delta_{resolve}: \mathcal{S}_{undefined} \times \mathcal{S}_{global} \to (\mathcal{S}_{resolved}, \mathcal{S}_{unresolved})$
+- Memory allocation with spatial mathematics: $\phi_{allocate}: \mathcal{S}_{sections} \to \mathcal{M}_{regions}$
+- Relocation processing with address computation: $\rho_{relocate}: \mathcal{R}_{entries} \to \mathcal{M}_{patched}$
 
-The project consists of several components:
-- ELF file format parsing
-- Symbol table management
-- Dynamic linking functionality
-- Basic relocation handling
-- Command-line interface compatible with LLD/GCC syntax
+**Structural Components** (Direct Julia):
+- Command-line interface with LLD/GCC compatibility
+- File I/O and system interactions
+- Configuration and error handling
+- Library support and system integration
+
+**Complete Linking Pipeline**:
+```math
+\mathcal{L}_{complete} = \omega_{serialize} \circ \rho_{relocate} \circ \phi_{allocate} \circ \delta_{resolve} \circ \pi_{parse}
+```
 
 ## How to build this project
 
