@@ -104,24 +104,37 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
     base_addr = 0x400000  # Standard base address
     headers_size = elf_header_size + ph_table_size + 0x1000  # Add padding
     
-    # Create first LOAD segment: ELF headers + text regions
+    # Create separate LOAD segments for headers and code
+    base_addr = 0x400000  # Standard base address
+    headers_size = elf_header_size + ph_table_size + 0x1000  # Add padding
+    
+    # First LOAD segment: ELF headers only (Read-only, NO execute!)
+    push!(program_headers, ProgramHeader(
+        PT_LOAD,                    # type
+        PF_R,                      # flags (Read only - headers should not be executable!)
+        0,                         # offset (starts at file beginning)
+        base_addr,                 # vaddr (0x400000)
+        base_addr,                 # paddr
+        UInt64(0x200),            # filesz (headers size - 512 bytes)
+        UInt64(0x200),            # memsz
+        0x1000                     # align (4KB)
+    ))
+    
+    # Second LOAD segment: Executable code regions (Read + Execute)
     if !isempty(text_regions)
         min_text_addr = minimum(r.base_address for r in text_regions)
         max_text_addr = maximum(r.base_address + r.size for r in text_regions)
         
-        # First segment should start at the lowest address to include _start and all text regions
-        # This covers both synthetic _start and main code regions
-        first_vaddr = min_text_addr & ~UInt64(0xfff)  # Round down to page boundary (4KB)
-        
-        # Calculate total size from first address through all text regions
-        total_size = max_text_addr - first_vaddr
+        # Calculate file offset for text segment (after headers)
+        text_file_offset = 0x200  # After headers
+        total_size = max_text_addr - min_text_addr
         
         push!(program_headers, ProgramHeader(
             PT_LOAD,                    # type
             PF_R | PF_X,               # flags (Read + Execute) 
-            0,                         # offset (starts at file beginning)
-            first_vaddr,               # vaddr
-            first_vaddr,               # paddr
+            text_file_offset,          # offset (after headers)
+            min_text_addr,             # vaddr (where text is loaded)
+            min_text_addr,             # paddr
             total_size,                # filesz
             total_size,                # memsz
             0x1000                     # align (4KB)

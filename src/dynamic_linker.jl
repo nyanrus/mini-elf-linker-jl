@@ -524,8 +524,17 @@ Memory allocation constraint:
 Address computation: α_next' = max_{m ∈ M'} (α_base(m) + size(m))
 """
 function allocate_memory_regions!(linker::DynamicLinker)
-    # Current address tracking: α_current = α_next
-    alpha_current = linker.next_address                     # ↔ α_current initialization
+    # Calculate space needed for ELF headers and program headers
+    # ELF header: 64 bytes
+    # Program headers: estimated 5 segments × 56 bytes = 280 bytes  
+    # Round up for safety: 64 + 280 = 344 → round to 512 bytes (0x200)
+    headers_size = UInt64(0x200)
+    
+    # Current address tracking: α_current = α_base + headers_size (start after headers)
+    alpha_current = linker.base_address + headers_size
+    
+    # Update linker's next_address to skip headers
+    linker.next_address = alpha_current
     
     # Iterate over all loaded objects: ∀o ∈ O
     for elf_file in linker.loaded_objects
