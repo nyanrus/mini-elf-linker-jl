@@ -298,7 +298,7 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
                     current_offset += ph.filesz
                 end
             end
-            # Non-LOAD segments (like GNU_STACK, PHDR) keep their original offsets
+            # Non-LOAD segments (like GNU_STACK, PHDR, INTERP) keep their original offsets
         end
         
         # Create ELF header for executable
@@ -371,14 +371,30 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
             # For segments, calculate the correct file offset based on virtual address mapping
             if ph.type == PT_LOAD && ph.vaddr == 0x400000  # First LOAD segment includes ELF headers
                 # For the first LOAD segment, we need to write regions at their correct file offsets
-                # But avoid overwriting the ELF header and program headers
+                # But avoid overwriting the ELF header, program headers, and interpreter string
                 headers_end = elf_header_size + length(program_headers) * 56
+                
+                # Find INTERP segment to avoid overwriting it
+                interp_start = UInt64(0)
+                interp_end = UInt64(0)
+                interp_ph = findfirst(ph -> ph.type == PT_INTERP, program_headers)
+                if interp_ph !== nothing
+                    interp_seg = program_headers[interp_ph]
+                    interp_start = interp_seg.offset
+                    interp_end = interp_seg.offset + interp_seg.filesz
+                end
                 
                 for region in segment_regions
                     region_file_offset = region.base_address - ph.vaddr  # Offset within segment
+                    region_file_end = region_file_offset + region.size
                     
-                    # Only write if the region doesn't overlap with headers
-                    if region_file_offset >= headers_end
+                    # Only write if the region doesn't overlap with headers or interpreter
+                    overlaps_headers = region_file_offset < headers_end
+                    overlaps_interp = (interp_start > 0 && 
+                                     region_file_offset < interp_end && 
+                                     region_file_end > interp_start)
+                    
+                    if !overlaps_headers && !overlaps_interp
                         seek(io, region_file_offset)
                         write(io, region.data)
                     end
