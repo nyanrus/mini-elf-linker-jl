@@ -402,17 +402,22 @@ end
     apply_relocation_to_memory!(linker, offset::UInt64, value::Int64, size::Int)
 
 Apply relocation by patching memory region data.
+Find the correct memory region based on virtual address ranges.
 """
 function apply_relocation_to_memory!(linker, offset::UInt64, value::Int64, size::Int)
-    # Find appropriate memory region and apply patch
+    # Find appropriate memory region by virtual address
     for region in linker.memory_regions
-        if offset < region.size
-            apply_relocation_to_region!(region, offset, value, size)
+        region_start = region.base_address
+        region_end = region.base_address + region.size
+        
+        if region_start <= offset < region_end
+            # Convert virtual address to offset within the region
+            region_offset = offset - region_start
+            apply_relocation_to_region!(region, region_offset, value, size)
             return true
         end
-        offset -= region.size
     end
-    @warn "Could not find memory region for relocation at offset $offset"
+    @warn "Could not find memory region for relocation at virtual address 0x$(string(offset, base=16))"
     return false
 end
 

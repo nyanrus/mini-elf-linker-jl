@@ -195,11 +195,11 @@ function parse_symbol_table(io::IO, section::SectionHeader)
 end
 
 """
-    parse_relocations(io::IO, section::SectionHeader) -> Vector{RelocationEntry}
+    parse_relocations(io::IO, section::SectionHeader, target_section_index::UInt16) -> Vector{RelocationEntry}
 
-Parse a relocation section from the ELF file.
+Parse a relocation section from the ELF file with target section context.
 """
-function parse_relocations(io::IO, section::SectionHeader)
+function parse_relocations(io::IO, section::SectionHeader, target_section_index::UInt16)
     relocations = Vector{RelocationEntry}()
     
     if section.entsize == 0
@@ -214,7 +214,7 @@ function parse_relocations(io::IO, section::SectionHeader)
         info = read(io, UInt64)
         addend = read(io, Int64)
         
-        push!(relocations, RelocationEntry(offset, info, addend))
+        push!(relocations, RelocationEntry(offset, info, addend, target_section_index))
     end
     
     return relocations
@@ -292,17 +292,19 @@ function parse_elf_file(filename::String)
             end
         end
         
-        # Find and parse relocations - only include .text relocations for now
+        # Find and parse relocations - process ALL relocation sections for production readiness
         relocations = RelocationEntry[]
         rela_sections = find_section_by_type(sections, UInt32(SHT_RELA))
         for rela_section in rela_sections
-            # Get the section name to filter out non-text relocations
+            # Get the section name for debugging
             section_name = get_string_from_table(string_table, rela_section.name)
             
-            # Only process .rela.text sections for basic linking
-            if section_name == ".rela.text"
-                append!(relocations, parse_relocations(io, rela_section))
-            end
+            # Process all relocation sections (not just .rela.text)
+            # This is essential for linking complex programs like TinyCC
+            target_section_index = UInt16(rela_section.info)  # info field contains target section index
+            parsed_relocations = parse_relocations(io, rela_section, target_section_index)
+            
+            append!(relocations, parsed_relocations)
         end
         
         return ElfFile(

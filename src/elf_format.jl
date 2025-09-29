@@ -51,11 +51,12 @@ struct SymbolTableEntry
     size::UInt64                   # Symbol size
 end
 
-# Relocation Entry with addend (64-bit)
+# Relocation Entry with addend (64-bit) - Enhanced for production readiness
 struct RelocationEntry
-    offset::UInt64                 # Location at which to apply the action
+    offset::UInt64                 # Location at which to apply the action (section-relative)
     info::UInt64                   # Relocation type and symbol index
     addend::Int64                  # Addend used to compute value
+    target_section_index::UInt16   # Index of the section this relocation applies to
 end
 
 # Program Header structure (64-bit)
