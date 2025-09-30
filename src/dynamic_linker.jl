@@ -796,6 +796,15 @@ Perform relocations for all loaded objects using enhanced relocation engine.
 function perform_relocations!(linker::DynamicLinker)
     for elf_file in linker.loaded_objects
         for relocation in elf_file.relocations
+            # Skip relocations for debug sections or other non-allocatable sections
+            # Check if the target section is allocatable by looking in our section address map
+            section_key = (elf_file.filename, relocation.target_section_index)
+            
+            if !haskey(linker.section_address_map, section_key)
+                # Target section was not allocated (probably debug section) - skip relocation
+                continue
+            end
+            
             # Convert section-relative offset to virtual address
             virtual_offset = get_relocation_virtual_address(linker, elf_file, relocation)
             
