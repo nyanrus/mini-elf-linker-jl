@@ -1,0 +1,334 @@
+name: Production Testing Framework
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      test_suite:
+        description: 'Test suite to run'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+        - all
+        - spec-analysis
+        - cmake-integration
+        - lld-comparison
+        - cmake-real-build
+
+jobs:
+  # Core specification analysis and compliance testing
+  specification-analysis:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'spec-analysis' || github.event.inputs.test_suite == '' }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Julia
+      uses: julia-actions/setup-julia@v1
+      with:
+        version: '1.9'
+        
+    - name: Cache Julia packages
+      uses: julia-actions/cache@v1
+      
+    - name: Install dependencies
+      run: |
+        julia --project=. -e 'using Pkg; Pkg.instantiate()'
+        
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential clang llvm lld lldb
+        
+    - name: Run ELF Specification Analysis
+      run: |
+        cd ${{ github.workspace }}
+        julia --project=. scripts/spec_analysis.jl
+        
+    - name: Upload specification analysis results
+      uses: actions/upload-artifact@v4
+      with:
+        name: specification-analysis-results
+        path: |
+          *.log
+          *.txt
+        retention-days: 30
+
+  # CMake integration testing with synthetic projects
+  cmake-integration:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'cmake-integration' || github.event.inputs.test_suite == '' }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Julia
+      uses: julia-actions/setup-julia@v1
+      with:
+        version: '1.9'
+        
+    - name: Cache Julia packages
+      uses: julia-actions/cache@v1
+      
+    - name: Install dependencies
+      run: |
+        julia --project=. -e 'using Pkg; Pkg.instantiate()'
+        
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential clang llvm lld lldb cmake
+        
+    - name: Run CMake Integration Tests
+      run: |
+        cd ${{ github.workspace }}
+        julia --project=. scripts/cmake_production_test.jl
+        
+    - name: Upload CMake integration results
+      uses: actions/upload-artifact@v4
+      with:
+        name: cmake-integration-results
+        path: |
+          /tmp/cmake_production_test/
+          *.log
+        retention-days: 30
+
+  # LLD comparison and binary analysis
+  lld-comparison:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'lld-comparison' || github.event.inputs.test_suite == '' }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Julia
+      uses: julia-actions/setup-julia@v1
+      with:
+        version: '1.9'
+        
+    - name: Cache Julia packages
+      uses: julia-actions/cache@v1
+      
+    - name: Install dependencies
+      run: |
+        julia --project=. -e 'using Pkg; Pkg.instantiate()'
+        
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential clang llvm lld lldb binutils
+        
+    - name: Run LLD Comparison Tests
+      run: |
+        cd ${{ github.workspace }}
+        julia --project=. scripts/lld_comparison.jl
+        
+    - name: Upload LLD comparison results
+      uses: actions/upload-artifact@v4
+      with:
+        name: lld-comparison-results
+        path: |
+          /tmp/lld_comparison_tests/
+          *.log
+        retention-days: 30
+
+  # Real CMake repository testing (longer running)
+  cmake-real-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: ${{ github.event.inputs.test_suite == 'cmake-real-build' || (github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'all') }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Julia
+      uses: julia-actions/setup-julia@v1
+      with:
+        version: '1.9'
+        
+    - name: Cache Julia packages
+      uses: julia-actions/cache@v1
+      
+    - name: Install dependencies
+      run: |
+        julia --project=. -e 'using Pkg; Pkg.instantiate()'
+        
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential clang llvm lld lldb cmake git
+        
+    - name: Run Real CMake Repository Testing
+      run: |
+        cd ${{ github.workspace }}
+        julia --project=. scripts/cmake_real_build_test.jl
+        
+    - name: Check CMake repository status
+      run: |
+        if [ -d ~/CMake ]; then
+          echo "CMake repository size: $(du -sh ~/CMake)"
+          echo "CMake files: $(find ~/CMake -name "*.cpp" -o -name "*.c" | wc -l) source files"
+        fi
+        
+    - name: Upload CMake real build results
+      uses: actions/upload-artifact@v4
+      with:
+        name: cmake-real-build-results
+        path: |
+          ~/CMake/build-*/
+          *.log
+        retention-days: 30
+
+  # Core Julia package testing
+  julia-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Julia
+      uses: julia-actions/setup-julia@v1
+      with:
+        version: '1.9'
+        
+    - name: Cache Julia packages
+      uses: julia-actions/cache@v1
+      
+    - name: Install dependencies
+      run: |
+        julia --project=. -e 'using Pkg; Pkg.instantiate()'
+        
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential clang
+        
+    - name: Run Julia package tests
+      run: |
+        cd ${{ github.workspace }}
+        julia --project=. test/runtests.jl
+        
+    - name: Test CLI functionality
+      run: |
+        cd ${{ github.workspace }}
+        julia --project=. bin/mini-elf-linker --version
+        julia --project=. bin/mini-elf-linker --help
+
+  # Integration summary and reporting
+  test-summary:
+    runs-on: ubuntu-latest
+    needs: [specification-analysis, cmake-integration, lld-comparison, julia-tests]
+    if: always()
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      
+    - name: Generate test summary
+      run: |
+        echo "# Production Testing Summary" > test-summary.md
+        echo "" >> test-summary.md
+        echo "## Test Results:" >> test-summary.md
+        echo "" >> test-summary.md
+        
+        # Check job results
+        if [ "${{ needs.specification-analysis.result }}" = "success" ]; then
+          echo "✅ **Specification Analysis**: PASSED" >> test-summary.md
+        else
+          echo "❌ **Specification Analysis**: FAILED" >> test-summary.md
+        fi
+        
+        if [ "${{ needs.cmake-integration.result }}" = "success" ]; then
+          echo "✅ **CMake Integration**: PASSED" >> test-summary.md  
+        else
+          echo "❌ **CMake Integration**: FAILED" >> test-summary.md
+        fi
+        
+        if [ "${{ needs.lld-comparison.result }}" = "success" ]; then
+          echo "✅ **LLD Comparison**: PASSED" >> test-summary.md
+        else
+          echo "❌ **LLD Comparison**: FAILED" >> test-summary.md  
+        fi
+        
+        if [ "${{ needs.julia-tests.result }}" = "success" ]; then
+          echo "✅ **Julia Package Tests**: PASSED" >> test-summary.md
+        else
+          echo "❌ **Julia Package Tests**: FAILED" >> test-summary.md
+        fi
+        
+        echo "" >> test-summary.md
+        echo "## Artifacts Generated:" >> test-summary.md
+        echo "" >> test-summary.md
+        
+        for dir in */; do
+          if [ -d "$dir" ]; then
+            echo "- **${dir%/}**: $(find "$dir" -type f | wc -l) files" >> test-summary.md
+          fi
+        done
+        
+        echo "" >> test-summary.md
+        echo "## Production Readiness Assessment:" >> test-summary.md
+        echo "" >> test-summary.md
+        
+        passed_count=0
+        total_count=4
+        
+        [ "${{ needs.specification-analysis.result }}" = "success" ] && ((passed_count++))
+        [ "${{ needs.cmake-integration.result }}" = "success" ] && ((passed_count++))
+        [ "${{ needs.lld-comparison.result }}" = "success" ] && ((passed_count++))
+        [ "${{ needs.julia-tests.result }}" = "success" ] && ((passed_count++))
+        
+        percentage=$((passed_count * 100 / total_count))
+        
+        if [ $percentage -ge 100 ]; then
+          echo "🟢 **EXCELLENT**: All production tests passed ($passed_count/$total_count)" >> test-summary.md
+          echo "The Mini-ELF-Linker demonstrates full production readiness." >> test-summary.md
+        elif [ $percentage -ge 75 ]; then
+          echo "🟡 **GOOD**: Most production tests passed ($passed_count/$total_count)" >> test-summary.md  
+          echo "The Mini-ELF-Linker shows strong production readiness with minor issues." >> test-summary.md
+        elif [ $percentage -ge 50 ]; then
+          echo "🟠 **PARTIAL**: Some production tests passed ($passed_count/$total_count)" >> test-summary.md
+          echo "The Mini-ELF-Linker needs improvement for production use." >> test-summary.md
+        else
+          echo "🔴 **NEEDS WORK**: Few production tests passed ($passed_count/$total_count)" >> test-summary.md
+          echo "The Mini-ELF-Linker requires significant work for production readiness." >> test-summary.md
+        fi
+        
+        cat test-summary.md
+        
+    - name: Upload test summary
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-summary
+        path: test-summary.md
+        retention-days: 90
+        
+    - name: Comment PR with results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = 'test-summary.md';
+          if (fs.existsSync(path)) {
+            const summary = fs.readFileSync(path, 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+          }

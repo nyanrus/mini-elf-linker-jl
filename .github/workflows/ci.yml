@@ -1,0 +1,119 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  # Basic Julia package testing
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        julia-version: ['1.6', '1.9']
+        
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Julia ${{ matrix.julia-version }}
+      uses: julia-actions/setup-julia@v1
+      with:
+        version: ${{ matrix.julia-version }}
+        
+    - name: Cache Julia packages
+      uses: julia-actions/cache@v1
+      
+    - name: Install dependencies
+      run: |
+        julia --project=. -e 'using Pkg; Pkg.instantiate()'
+        
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential clang
+        
+    - name: Run Julia tests
+      run: |
+        julia --project=. test/runtests.jl
+        
+    - name: Test CLI functionality
+      run: |
+        julia --project=. bin/mini-elf-linker --version
+        julia --project=. bin/mini-elf-linker --help
+
+  # Quick specification analysis
+  spec-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Julia
+      uses: julia-actions/setup-julia@v1
+      with:
+        version: '1.9'
+        
+    - name: Cache Julia packages
+      uses: julia-actions/cache@v1
+      
+    - name: Install dependencies
+      run: |
+        julia --project=. -e 'using Pkg; Pkg.instantiate()'
+        
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential clang llvm lld lldb
+        
+    - name: Run ELF Specification Analysis
+      run: |
+        julia --project=. scripts/spec_analysis.jl
+
+  # Basic linker functionality test
+  linker-smoke-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Julia
+      uses: julia-actions/setup-julia@v1
+      with:
+        version: '1.9'
+        
+    - name: Cache Julia packages
+      uses: julia-actions/cache@v1
+      
+    - name: Install dependencies
+      run: |
+        julia --project=. -e 'using Pkg; Pkg.instantiate()'
+        
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential clang
+        
+    - name: Create simple test program
+      run: |
+        echo 'int main() { return 42; }' > /tmp/test.c
+        clang -c /tmp/test.c -o /tmp/test.o
+        
+    - name: Test Mini-ELF-Linker with simple program
+      run: |
+        julia --project=. bin/mini-elf-linker -o /tmp/test_output /tmp/test.o -v
+        
+    - name: Verify output executable
+      run: |
+        if [ -f /tmp/test_output ]; then
+          echo "✅ Executable created successfully"
+          ls -la /tmp/test_output
+          file /tmp/test_output
+        else
+          echo "❌ Executable not created"
+          exit 1
+        fi
