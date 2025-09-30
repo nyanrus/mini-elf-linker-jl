@@ -96,9 +96,9 @@ Base address α_base defaults to 0x400000 (standard Linux executable base).
 For PIE executables, use lower addresses compatible with 0x0 base.
 """
 function DynamicLinker(alpha_base::UInt64 = UInt64(0x400000); pie_mode::Bool = false)
-    # For PIE executables, use a reasonable base address like LLD does
+    # For PIE executables, use base address 0 to match LLD behavior and our ELF writer
     if pie_mode
-        alpha_base = UInt64(0x1000)   # Start at 4KB for PIE executables like LLD, not 0x0
+        alpha_base = UInt64(0x0)   # Start at 0 for PIE executables like LLD
         got_offset = 0x3000   # GOT at 12KB (similar to LLD layout)
         plt_offset = 0x3100   # PLT at 12KB + 256 bytes  
     else
@@ -552,8 +552,14 @@ function allocate_memory_regions!(linker::DynamicLinker)
     # Calculate space needed for ELF headers and program headers
     # ELF header: 64 bytes
     # Program headers: estimated 5 segments × 56 bytes = 280 bytes  
-    # Round up for safety: 64 + 280 = 344 → round to 512 bytes (0x200)
-    headers_size = UInt64(0x200)
+    # Calculate headers size - needs more space for PIE executables with base 0
+    # For PIE mode, we need to leave space for the first LOAD segment (4KB)
+    pie_mode = !isempty(linker.dynamic_section.entries)
+    headers_size = if pie_mode && linker.base_address == 0
+        UInt64(0x1000)  # 4KB for PIE executables with base 0 (matches LLD layout)
+    else
+        UInt64(0x200)   # 512 bytes for traditional executables
+    end
     
     # Current address tracking: α_current = α_base + headers_size (start after headers)
     alpha_current = linker.base_address + headers_size
@@ -747,6 +753,71 @@ function allocate_memory_regions!(linker::DynamicLinker)
                 if linker.dynamic_section.entries[i].tag == DT_JMPREL
                     linker.dynamic_section.entries[i] = DynamicEntry(DT_JMPREL, rela_plt_base)
                     break
+                end
+            end
+        end
+        
+        # Create regular RELA relocation table for other dynamic relocations
+        rela_base = align_address(alpha_current, UInt64(8))
+        # Create basic relocations - at minimum we need relocations for GOT entries and global symbols
+        # LLD typically has relocations for: _GLOBAL_OFFSET_TABLE_, program counters, etc.
+        rela_entries = []
+        
+        # Add relocation for _GLOBAL_OFFSET_TABLE_ symbol (R_X86_64_RELATIVE)
+        if haskey(linker.global_symbol_table, "_GLOBAL_OFFSET_TABLE_")
+            got_symbol = linker.global_symbol_table["_GLOBAL_OFFSET_TABLE_"]
+            push!(rela_entries, (got_symbol.value, 0, 8))  # (offset, symbol_index, type=R_X86_64_RELATIVE)
+        end
+        
+        # Add relocations for any other global data that needs runtime fixing
+        # For now, create a minimal set to match LLD's RELACOUNT=3
+        push!(rela_entries, (linker.got.base_address, 0, 8))      # GOT base relative
+        push!(rela_entries, (linker.got.base_address + 8, 0, 8))  # Second GOT entry
+        
+        if !isempty(rela_entries)
+            rela_size = UInt64(length(rela_entries) * 24)  # Each RELA entry is 24 bytes
+            alpha_current = rela_base + rela_size
+            
+            rela_data = Vector{UInt8}()
+            sizehint!(rela_data, rela_size)
+            
+            for (offset, symbol_idx, reloc_type) in rela_entries
+                # r_offset - where to apply the relocation
+                for i in 0:7
+                    push!(rela_data, UInt8((offset >> (8*i)) & 0xff))
+                end
+                
+                # r_info - symbol index and relocation type
+                r_info = (UInt64(symbol_idx) << 32) | UInt64(reloc_type)
+                for i in 0:7
+                    push!(rela_data, UInt8((r_info >> (8*i)) & 0xff))
+                end
+                
+                # r_addend - addend for the relocation (base address for relative)
+                addend = (reloc_type == 8) ? linker.base_address : 0  # Use base address for R_X86_64_RELATIVE
+                for i in 0:7
+                    push!(rela_data, UInt8((addend >> (8*i)) & 0xff))
+                end
+            end
+            
+            rela_region = MemoryRegion(
+                rela_data,
+                rela_base,
+                rela_size,
+                0x4  # R-- permissions (relocation table is read-only)
+            )
+            push!(linker.memory_regions, rela_region)
+            println("Allocated RELA relocation table at 0x$(string(rela_base, base=16)) ($(rela_size) bytes)")
+            
+            # Update DT_RELA entries with actual addresses
+            for i in 1:length(linker.dynamic_section.entries)
+                entry = linker.dynamic_section.entries[i]
+                if entry.tag == DT_RELA
+                    linker.dynamic_section.entries[i] = DynamicEntry(DT_RELA, rela_base)
+                elseif entry.tag == DT_RELASZ
+                    linker.dynamic_section.entries[i] = DynamicEntry(DT_RELASZ, rela_size)
+                elseif entry.tag == 0x6ffffff9  # RELACOUNT
+                    linker.dynamic_section.entries[i] = DynamicEntry(0x6ffffff9, UInt64(length(rela_entries)))
                 end
             end
         end

@@ -107,13 +107,14 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
     
     # Add PT_PHDR program header FIRST (required for PIE executables)
     # This describes the program header table itself and MUST come before LOAD segments
-    # CRITICAL FIX: PHDR virtual address must be at the start of the first LOAD segment
+    # CRITICAL FIX: PHDR virtual address must match the memory layout where first LOAD starts at base_addr
+    # and covers the program headers at offset elf_header_size
     push!(program_headers, ProgramHeader(
         PT_PHDR,                    # type
         PF_R,                      # flags (Read only)
         UInt64(elf_header_size),   # offset (right after ELF header)
-        base_addr + UInt64(elf_header_size),   # vaddr (base + offset)
-        base_addr + UInt64(elf_header_size),   # paddr
+        UInt64(elf_header_size),   # vaddr (should be just the offset for proper coverage)
+        UInt64(elf_header_size),   # paddr
         UInt64(ph_table_size),     # filesz (size of program header table)
         UInt64(ph_table_size),     # memsz
         0x8                        # align (8-byte alignment)
@@ -127,7 +128,7 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
         
         # Find a suitable location for the interpreter string (after headers)
         interp_offset = elf_header_size + ph_table_size + 0x40  # Some padding
-        interp_vaddr = base_addr + interp_offset
+        interp_vaddr = interp_offset  # Use same as offset for first LOAD coverage
         
         push!(program_headers, ProgramHeader(
             PT_INTERP,                  # type
@@ -143,16 +144,16 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
     
     # First LOAD segment: ELF headers + Program headers (Read-only, NO execute!)
     # This LOAD segment must cover both ELF header and program header table
-    # IMPORTANT: Start the LOAD segment from offset 0 to properly cover PHDR
+    # IMPORTANT: Start the LOAD segment from offset 0 and virtual address 0 to properly cover PHDR
     headers_end = elf_header_size + ph_table_size
-    # The first LOAD must start at file offset 0 and include enough to cover headers + interp
+    # The first LOAD must start at file offset 0 and virtual address 0 like LLD
     first_load_size = UInt64(max(0x1000, headers_end + 0x100))  # Extra space for INTERP
     push!(program_headers, ProgramHeader(
         PT_LOAD,                    # type
         PF_R,                      # flags (Read only - headers should not be executable!)
         0,                         # offset (starts at file beginning to cover PHDR)
-        base_addr,                 # vaddr (base address - MUST cover PHDR range)
-        base_addr,                 # paddr
+        0,                         # vaddr (start at 0 like LLD to cover PHDR properly)
+        0,                         # paddr
         first_load_size,           # filesz (covers headers + interp)
         first_load_size,           # memsz
         0x1000                     # align (4KB)
