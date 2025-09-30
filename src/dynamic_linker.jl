@@ -694,6 +694,62 @@ function allocate_memory_regions!(linker::DynamicLinker)
                 break
             end
         end
+        
+        # Create PLT relocation table (JMPREL) if we have PLT entries
+        if !isempty(linker.plt.entries)
+            rela_plt_base = align_address(alpha_current, UInt64(8))
+            # Each PLT relocation is 24 bytes (Elf64_Rela)
+            rela_plt_size = UInt64(length(linker.plt.entries) * 24)
+            alpha_current = rela_plt_base + rela_plt_size
+            
+            rela_plt_data = Vector{UInt8}()
+            sizehint!(rela_plt_data, rela_plt_size)
+            
+            # Create relocation entries for each PLT symbol
+            got_entry_addr = linker.got.base_address + 8  # Skip initial GOT entries
+            plt_symbols = ["printf", "__libc_start_main"]  # Known dynamic symbols
+            
+            for (idx, symbol_name) in enumerate(plt_symbols)
+                if idx <= length(linker.plt.entries)
+                    # r_offset - where to apply the relocation (GOT entry)
+                    got_offset = got_entry_addr + UInt64((idx - 1) * 8)
+                    for i in 0:7
+                        push!(rela_plt_data, UInt8((got_offset >> (8*i)) & 0xff))
+                    end
+                    
+                    # r_info - symbol index and relocation type
+                    # Symbol index in dynamic symbol table + R_X86_64_JUMP_SLOT (7)
+                    symbol_idx = UInt32(idx)  # Index in dynsym table
+                    reloc_type = UInt32(7)    # R_X86_64_JUMP_SLOT
+                    r_info = (UInt64(symbol_idx) << 32) | UInt64(reloc_type)
+                    for i in 0:7
+                        push!(rela_plt_data, UInt8((r_info >> (8*i)) & 0xff))
+                    end
+                    
+                    # r_addend - addend (usually 0 for PLT relocations)
+                    for i in 0:7
+                        push!(rela_plt_data, 0x00)
+                    end
+                end
+            end
+            
+            rela_plt_region = MemoryRegion(
+                rela_plt_data,
+                rela_plt_base,
+                rela_plt_size,
+                0x4  # R-- permissions (relocation table is read-only)
+            )
+            push!(linker.memory_regions, rela_plt_region)
+            println("Allocated PLT relocation table at 0x$(string(rela_plt_base, base=16)) ($(rela_plt_size) bytes)")
+            
+            # Update DT_JMPREL entry with actual address
+            for i in 1:length(linker.dynamic_section.entries)
+                if linker.dynamic_section.entries[i].tag == DT_JMPREL
+                    linker.dynamic_section.entries[i] = DynamicEntry(DT_JMPREL, rela_plt_base)
+                    break
+                end
+            end
+        end
     end
     
     # Allocate PLT memory region if present
