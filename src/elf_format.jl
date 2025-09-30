@@ -132,6 +132,7 @@ const PT_SHLIB = 5          # Reserved
 const PT_PHDR = 6           # Program header table
 const PT_TLS = 7            # Thread-local storage
 const PT_GNU_STACK = 0x6474e551  # GNU stack permissions
+const PT_GNU_RELRO = 0x6474e552  # GNU read-only after relocation
 
 # Program header flags
 const PF_X = 0x1            # Execute
