@@ -1,0 +1,38 @@
+name: "Copilot Setup Steps"
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Install LLVM toolchain (clang, lld, lldb)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld lldb
+      
+      - name: Set up Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.11'
+      
+      - name: Verify installations
+        run: |
+          julia --version
+          clang --version
+          ld.lld --version
+          lldb --version
