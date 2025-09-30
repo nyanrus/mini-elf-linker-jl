@@ -96,11 +96,11 @@ Base address α_base defaults to 0x400000 (standard Linux executable base).
 For PIE executables, use lower addresses compatible with 0x0 base.
 """
 function DynamicLinker(alpha_base::UInt64 = UInt64(0x400000); pie_mode::Bool = false)
-    # For PIE executables, use much lower base addresses compatible with 0x0 relocation
+    # For PIE executables, use base address 0x0 to match LLD behavior
     if pie_mode
-        alpha_base = UInt64(0x1000)  # Start at 4KB for PIE executables
-        got_offset = 0x10000   # GOT at 64KB
-        plt_offset = 0x11000   # PLT at 68KB  
+        alpha_base = UInt64(0x0)   # Start at 0x0 for PIE executables like LLD
+        got_offset = 0x3000   # GOT at 12KB (similar to LLD layout)
+        plt_offset = 0x3100   # PLT at 12KB + 256 bytes  
     else
         got_offset = 0x100000  # GOT at base + 1MB for traditional executables
         plt_offset = 0x110000  # PLT at base + 1MB + 64KB
@@ -702,6 +702,33 @@ function allocate_memory_regions!(linker::DynamicLinker)
                     offset = (i - 1) * 16 + 8  # Skip to value field
                     for j in 1:8
                         dynamic_region.data[offset + j] = UInt8((dynstr_base >> ((j - 1) * 8)) & 0xff)
+                    end
+                    break
+                end
+            end
+        end
+    end
+    
+    # Update PLTGOT entry with actual GOT base address (similar to DT_STRTAB update)
+    if !isempty(linker.got.entries) && !isempty(linker.dynamic_section.entries)
+        # Find the dynamic section memory region  
+        dynamic_region = nothing
+        for region in linker.memory_regions
+            if region.permissions == 0x4 && length(region.data) == length(linker.dynamic_section.entries) * 16
+                dynamic_region = region
+                break
+            end
+        end
+        
+        if dynamic_region !== nothing
+            # Update DT_PLTGOT entry with actual GOT base address
+            for i in 1:length(linker.dynamic_section.entries)
+                if linker.dynamic_section.entries[i].tag == DT_PLTGOT
+                    linker.dynamic_section.entries[i] = DynamicEntry(DT_PLTGOT, linker.got.base_address)
+                    # Also update the serialized data
+                    offset = (i - 1) * 16 + 8  # Skip to value field
+                    for j in 1:8
+                        dynamic_region.data[offset + j] = UInt8((linker.got.base_address >> ((j - 1) * 8)) & 0xff)
                     end
                     break
                 end

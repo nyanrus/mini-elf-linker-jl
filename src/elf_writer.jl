@@ -107,12 +107,12 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
     
     # Add PT_PHDR program header FIRST (required for PIE executables)
     # This describes the program header table itself and MUST come before LOAD segments
-    # CRITICAL FIX: PHDR virtual address must be within a LOAD segment's range
+    # CRITICAL FIX: PHDR virtual address must be at the start of the first LOAD segment
     push!(program_headers, ProgramHeader(
         PT_PHDR,                    # type
         PF_R,                      # flags (Read only)
         UInt64(elf_header_size),   # offset (right after ELF header)
-        base_addr + UInt64(elf_header_size),   # vaddr (base + offset, covered by first LOAD)
+        base_addr + UInt64(elf_header_size),   # vaddr (base + offset)
         base_addr + UInt64(elf_header_size),   # paddr
         UInt64(ph_table_size),     # filesz (size of program header table)
         UInt64(ph_table_size),     # memsz
@@ -121,12 +121,13 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
     
     # First LOAD segment: ELF headers + Program headers (Read-only, NO execute!)
     # This LOAD segment must cover both ELF header and program header table
+    # IMPORTANT: Start the LOAD segment from offset 0 to properly cover PHDR
     headers_end = elf_header_size + ph_table_size
     push!(program_headers, ProgramHeader(
         PT_LOAD,                    # type
         PF_R,                      # flags (Read only - headers should not be executable!)
         0,                         # offset (starts at file beginning)
-        base_addr,                 # vaddr (base address - covers PHDR range)
+        base_addr,                 # vaddr (base address - MUST cover PHDR range)
         base_addr,                 # paddr
         UInt64(max(0x1000, headers_end)), # filesz (at least 4KB to cover headers)
         UInt64(max(0x1000, headers_end)), # memsz

@@ -302,28 +302,23 @@ function finalize_dynamic_section!(dynamic::DynamicSection, linker)
     
     # String table
     if !isempty(dynamic.string_table)
-        push!(dynamic.entries, DynamicEntry(DT_STRTAB, 0x0))  # Address filled later
+        push!(dynamic.entries, DynamicEntry(DT_STRTAB, 0x0))  # Address filled later in writer
         push!(dynamic.entries, DynamicEntry(DT_STRSZ, UInt64(length(dynamic.string_table))))
     end
     
-    # Symbol table - will be implemented when we add dynamic symbol support
-    # push!(dynamic.entries, DynamicEntry(DT_SYMTAB, get_dynsym_address(linker)))
-    # push!(dynamic.entries, DynamicEntry(DT_SYMENT, UInt64(sizeof(SymbolTableEntry))))
-    
-    # Relocations - will be implemented with enhanced relocation output
-    # if !isempty(linker.relocations)
-    #     push!(dynamic.entries, DynamicEntry(DT_RELA, get_rela_address(linker)))
-    #     push!(dynamic.entries, DynamicEntry(DT_RELASZ, get_rela_size(linker)))
-    #     push!(dynamic.entries, DynamicEntry(DT_RELAENT, UInt64(sizeof(RelocationEntry))))
-    # end
-    
-    # PLT relocations
+    # PLT relocations - fix PLTGOT address
     if !isempty(linker.plt.entries)
+        # Use the actual GOT base address, not a hardcoded value
         push!(dynamic.entries, DynamicEntry(DT_PLTGOT, linker.got.base_address))
-        # PLT relocation details will be filled when PLT relocations are implemented
-        # push!(dynamic.entries, DynamicEntry(DT_PLTRELSZ, get_plt_reloc_size(linker)))
-        # push!(dynamic.entries, DynamicEntry(DT_PLTREL, UInt64(DT_RELA)))
-        # push!(dynamic.entries, DynamicEntry(DT_JMPREL, get_plt_reloc_address(linker)))
+        # For now, add placeholder PLT relocation entries - these need proper implementation
+        push!(dynamic.entries, DynamicEntry(DT_PLTRELSZ, UInt64(48)))  # Placeholder size
+        push!(dynamic.entries, DynamicEntry(DT_PLTREL, UInt64(7)))     # DT_RELA = 7
+        push!(dynamic.entries, DynamicEntry(DT_JMPREL, UInt64(0)))     # Address filled later
+    end
+    
+    # Add PIE flag for position-independent executables
+    if !isempty(linker.dynamic_section.entries)
+        push!(dynamic.entries, DynamicEntry(0x6ffffffb, UInt64(0x08000001)))  # FLAGS_1: PIE
     end
     
     # Terminator - must be last
