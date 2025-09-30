@@ -19,6 +19,7 @@ include("relocation_engine.jl")
 include("dynamic_linker.jl")
 include("elf_writer.jl")
 include("library_support.jl")
+include("production_library_support.jl")
 include("elf_validation.jl")
 include("cli.jl")
 

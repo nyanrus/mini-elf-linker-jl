@@ -100,19 +100,20 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
     
     program_headers = ProgramHeader[]
     
-    # For PIE executables, use base address 0x0 to allow relocation
-    # For traditional executables, use fixed base address 0x400000
+    # Use the linker's actual base address instead of hardcoded values
+    # For PIE executables, this will be low addresses; for static, higher addresses
     pie_executable = !isempty(linker.dynamic_section.entries)
-    base_addr = pie_executable ? 0x0 : 0x400000
+    base_addr = linker.base_address  # Use linker's configured base address
     
     # Add PT_PHDR program header FIRST (required for PIE executables)
     # This describes the program header table itself and MUST come before LOAD segments
+    # CRITICAL FIX: PHDR virtual address must be at the start of the first LOAD segment
     push!(program_headers, ProgramHeader(
         PT_PHDR,                    # type
         PF_R,                      # flags (Read only)
         UInt64(elf_header_size),   # offset (right after ELF header)
-        UInt64(elf_header_size),   # vaddr (offset from first LOAD segment base)
-        UInt64(elf_header_size),   # paddr
+        base_addr + UInt64(elf_header_size),   # vaddr (base + offset)
+        base_addr + UInt64(elf_header_size),   # paddr
         UInt64(ph_table_size),     # filesz (size of program header table)
         UInt64(ph_table_size),     # memsz
         0x8                        # align (8-byte alignment)
@@ -120,12 +121,13 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
     
     # First LOAD segment: ELF headers + Program headers (Read-only, NO execute!)
     # This LOAD segment must cover both ELF header and program header table
+    # IMPORTANT: Start the LOAD segment from offset 0 to properly cover PHDR
     headers_end = elf_header_size + ph_table_size
     push!(program_headers, ProgramHeader(
         PT_LOAD,                    # type
         PF_R,                      # flags (Read only - headers should not be executable!)
         0,                         # offset (starts at file beginning)
-        base_addr,                 # vaddr (base address - covers PHDR range)
+        base_addr,                 # vaddr (base address - MUST cover PHDR range)
         base_addr,                 # paddr
         UInt64(max(0x1000, headers_end)), # filesz (at least 4KB to cover headers)
         UInt64(max(0x1000, headers_end)), # memsz
@@ -350,13 +352,13 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
             ELFCLASS64,                 # class
             ELFDATA2LSB,                # data
             EV_CURRENT,                 # version
-            ELFOSABI_GNU,               # osabi (GNU/Linux)
+            ELFOSABI_SYSV,              # osabi (System V - better compatibility)
             0,                          # abiversion
             (0, 0, 0, 0, 0, 0, 0),     # pad
             if !isempty(linker.dynamic_section.entries)
-                ET_DYN                      # type - DYN (Position-Independent Executable) when dynamic section exists
+                ET_DYN      # type - DYN (Position-Independent Executable) when dynamic section exists
             else
-                ET_EXEC                     # type - EXEC (Static Executable) for purely static executables
+                ET_EXEC     # type - EXEC (Static Executable) for purely static executables
             end,
             EM_X86_64,                  # machine
             UInt32(EV_CURRENT),         # version2

@@ -93,11 +93,22 @@ Mathematical model: S_Δ initialization
 Create a new dynamic linker instance with enhanced structures for production-ready linking.
 
 Base address α_base defaults to 0x400000 (standard Linux executable base).
+For PIE executables, use lower addresses compatible with 0x0 base.
 """
-function DynamicLinker(alpha_base::UInt64 = UInt64(0x400000))
+function DynamicLinker(alpha_base::UInt64 = UInt64(0x400000); pie_mode::Bool = false)
+    # For PIE executables, use base address 0x0 to match LLD behavior
+    if pie_mode
+        alpha_base = UInt64(0x0)   # Start at 0x0 for PIE executables like LLD
+        got_offset = 0x3000   # GOT at 12KB (similar to LLD layout)
+        plt_offset = 0x3100   # PLT at 12KB + 256 bytes  
+    else
+        got_offset = 0x100000  # GOT at base + 1MB for traditional executables
+        plt_offset = 0x110000  # PLT at base + 1MB + 64KB
+    end
+    
     # Initialize enhanced GOT and PLT structures
-    got = GlobalOffsetTable(alpha_base + 0x100000)  # GOT at base + 1MB  
-    plt = ProcedureLinkageTable(alpha_base + 0x110000)  # PLT at base + 1MB + 64KB
+    got = GlobalOffsetTable(alpha_base + got_offset)  
+    plt = ProcedureLinkageTable(alpha_base + plt_offset)
     relocation_dispatcher = RelocationDispatcher()
     dynamic_section = DynamicSection()
     
@@ -698,6 +709,33 @@ function allocate_memory_regions!(linker::DynamicLinker)
         end
     end
     
+    # Update PLTGOT entry with actual GOT base address (similar to DT_STRTAB update)
+    if !isempty(linker.got.entries) && !isempty(linker.dynamic_section.entries)
+        # Find the dynamic section memory region  
+        dynamic_region = nothing
+        for region in linker.memory_regions
+            if region.permissions == 0x4 && length(region.data) == length(linker.dynamic_section.entries) * 16
+                dynamic_region = region
+                break
+            end
+        end
+        
+        if dynamic_region !== nothing
+            # Update DT_PLTGOT entry with actual GOT base address
+            for i in 1:length(linker.dynamic_section.entries)
+                if linker.dynamic_section.entries[i].tag == DT_PLTGOT
+                    linker.dynamic_section.entries[i] = DynamicEntry(DT_PLTGOT, linker.got.base_address)
+                    # Also update the serialized data
+                    offset = (i - 1) * 16 + 8  # Skip to value field
+                    for j in 1:8
+                        dynamic_region.data[offset + j] = UInt8((linker.got.base_address >> ((j - 1) * 8)) & 0xff)
+                    end
+                    break
+                end
+            end
+        end
+    end
+    
     # Update final next_address
     linker.next_address = alpha_current
     
@@ -785,6 +823,15 @@ Perform relocations for all loaded objects using enhanced relocation engine.
 function perform_relocations!(linker::DynamicLinker)
     for elf_file in linker.loaded_objects
         for relocation in elf_file.relocations
+            # Skip relocations for debug sections or other non-allocatable sections
+            # Check if the target section is allocatable by looking in our section address map
+            section_key = (elf_file.filename, relocation.target_section_index)
+            
+            if !haskey(linker.section_address_map, section_key)
+                # Target section was not allocated (probably debug section) - skip relocation
+                continue
+            end
+            
             # Convert section-relative offset to virtual address
             virtual_offset = get_relocation_virtual_address(linker, elf_file, relocation)
             
@@ -867,7 +914,15 @@ function link_objects(filenames::Vector{String}; base_address::UInt64 = UInt64(0
                      enable_system_libraries::Bool = true,
                      library_search_paths::Vector{String} = String[],
                      library_names::Vector{String} = String[])
-    linker = DynamicLinker(base_address)
+    # Detect if we'll need dynamic linking (PIE mode)
+    pie_mode = enable_system_libraries || !isempty(library_names)
+    
+    # Create linker with appropriate mode
+    linker = if pie_mode
+        DynamicLinker(pie_mode=true)  # Use PIE-compatible addresses
+    else
+        DynamicLinker(base_address)   # Use specified base address
+    end
     
     # Load all objects
     for filename in filenames
