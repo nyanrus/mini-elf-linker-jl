@@ -399,19 +399,16 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
         
         # Write segment data by grouping memory regions
         for (segment_idx, ph) in enumerate(program_headers)
-            # Skip non-LOAD segments
-            if ph.type != PT_LOAD
-                continue
-            end
-            
-            # Find all memory regions that belong to this segment
-            segment_regions = filter(linker.memory_regions) do region
-                region.base_address >= ph.vaddr && 
-                region.base_address < ph.vaddr + ph.memsz
-            end
-            
-            # Sort regions by address
-            sort!(segment_regions, by=r -> r.base_address)
+            # Process LOAD segments
+            if ph.type == PT_LOAD
+                # Find all memory regions that belong to this segment
+                segment_regions = filter(linker.memory_regions) do region
+                    region.base_address >= ph.vaddr && 
+                    region.base_address < ph.vaddr + ph.memsz
+                end
+                
+                # Sort regions by address
+                sort!(segment_regions, by=r -> r.base_address)
             
             # For segments, calculate the correct file offset based on virtual address mapping
             if ph.type == PT_LOAD && ph.offset == 0  # First LOAD segment includes ELF headers
@@ -501,6 +498,53 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
                     end
                 end
             end
+            
+            # Process DYNAMIC segment separately
+            elseif ph.type == PT_DYNAMIC
+                # Find the dynamic section memory region
+                dynamic_region = findfirst(linker.memory_regions) do region
+                    region.base_address == ph.vaddr
+                end
+                
+                if dynamic_region !== nothing
+                    region = linker.memory_regions[dynamic_region]
+                    println("🔧 Writing DYNAMIC section at vaddr 0x$(string(region.base_address, base=16)) to file offset 0x$(string(ph.offset, base=16))")
+                    seek(io, ph.offset)
+                    write(io, region.data)
+                else
+                    @warn "Could not find dynamic section memory region at vaddr 0x$(string(ph.vaddr, base=16))"
+                end
+            end
+        end
+        
+        # Write critical regions that might not be in LOAD segments
+        # These include GOT, symbol tables, relocation tables, and string tables
+        # Write them at their virtual addresses (which work as file offsets for PIE base 0)
+        
+        # Find dynamic section vaddr to exclude it (already written)
+        dynamic_vaddr = UInt64(0)
+        for ph in program_headers
+            if ph.type == PT_DYNAMIC
+                dynamic_vaddr = ph.vaddr
+                break
+            end
+        end
+        
+        critical_regions = filter(linker.memory_regions) do region
+            # Check if region is GOT, symbol table, relocation table, or string table
+            # These typically have read-only (0x4) or read-write (0x6) permissions
+            # and are at addresses beyond the main code sections
+            perms = region.permissions
+            addr = region.base_address
+            # Write non-executable regions at higher addresses
+            (perms == 0x4 || perms == 0x6) && addr >= 0x1180 && region.base_address != dynamic_vaddr
+        end
+        
+        for region in critical_regions
+            file_offset = region.base_address
+            println("🔧 Writing critical region at vaddr 0x$(string(region.base_address, base=16)) to file offset 0x$(string(file_offset, base=16)) ($(region.size) bytes, perms=0x$(string(region.permissions, base=16)))")
+            seek(io, file_offset)
+            write(io, region.data)
         end
     end
     
