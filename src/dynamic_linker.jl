@@ -619,6 +619,83 @@ function allocate_memory_regions!(linker::DynamicLinker)
         println("Allocated GOT memory region at 0x$(string(got_base, base=16)) ($(got_size) bytes)")
     end
     
+    # Allocate dynamic symbol table (dynsym) memory region if we have dynamic symbols
+    dynsym_base = UInt64(0)
+    if !isempty(linker.dynamic_section.entries)
+        # Create symbol table with all defined symbols that might be needed for dynamic linking
+        dynsym_base = align_address(alpha_current, UInt64(8))  # 8-byte align
+        
+        # Collect symbols that should be in the dynamic symbol table
+        dynamic_syms = Symbol[]
+        
+        # Add undefined symbols that are resolved by dynamic linking
+        for (name, symbol) in linker.global_symbol_table
+            if !symbol.defined || name in ["printf", "__libc_start_main", "_GLOBAL_OFFSET_TABLE_", "__gmon_start__"]
+                push!(dynamic_syms, symbol)
+            end
+        end
+        
+        # Each symbol table entry is 24 bytes (Elf64_Sym)
+        dynsym_size = UInt64((length(dynamic_syms) + 1) * 24)  # +1 for null entry
+        alpha_current = dynsym_base + dynsym_size
+        
+        # Create symbol table data
+        dynsym_data = Vector{UInt8}()
+        sizehint!(dynsym_data, dynsym_size)
+        
+        # First entry is always null (STN_UNDEF)
+        for _ in 1:24
+            push!(dynsym_data, 0x00)
+        end
+        
+        # Add each dynamic symbol
+        for symbol in dynamic_syms
+            # st_name (4 bytes) - offset in string table (we'll use 0 for now)
+            for i in 0:3
+                push!(dynsym_data, 0x00)
+            end
+            
+            # st_info (1 byte) - symbol type and binding
+            info = (symbol.binding << 4) | (symbol.type & 0xf)
+            push!(dynsym_data, UInt8(info))
+            
+            # st_other (1 byte) - symbol visibility
+            push!(dynsym_data, 0x00)
+            
+            # st_shndx (2 bytes) - section index
+            for i in 0:1
+                push!(dynsym_data, UInt8((symbol.section >> (8*i)) & 0xff))
+            end
+            
+            # st_value (8 bytes) - symbol value/address
+            for i in 0:7
+                push!(dynsym_data, UInt8((symbol.value >> (8*i)) & 0xff))
+            end
+            
+            # st_size (8 bytes) - symbol size
+            for i in 0:7
+                push!(dynsym_data, UInt8((symbol.size >> (8*i)) & 0xff))
+            end
+        end
+        
+        dynsym_region = MemoryRegion(
+            dynsym_data,
+            dynsym_base,
+            dynsym_size,
+            0x4  # R-- permissions (symbol table is read-only)
+        )
+        push!(linker.memory_regions, dynsym_region)
+        println("Allocated dynamic symbol table at 0x$(string(dynsym_base, base=16)) ($(dynsym_size) bytes)")
+        
+        # Update DT_SYMTAB entry with actual address
+        for i in 1:length(linker.dynamic_section.entries)
+            if linker.dynamic_section.entries[i].tag == DT_SYMTAB
+                linker.dynamic_section.entries[i] = DynamicEntry(DT_SYMTAB, dynsym_base)
+                break
+            end
+        end
+    end
+    
     # Allocate PLT memory region if present
     if !isempty(linker.plt.entries)
         # Assign actual base address to PLT
@@ -971,6 +1048,52 @@ function link_objects(filenames::Vector{String}; base_address::UInt64 = UInt64(0
         for sym in unresolved
             println("  - $sym")
         end
+        
+        # Handle critical symbols that must be resolved for dynamic linking to work
+        filtered_unresolved = String[]
+        for sym in unresolved
+            if sym == "_GLOBAL_OFFSET_TABLE_"
+                # Create _GLOBAL_OFFSET_TABLE_ symbol pointing to GOT base
+                got_symbol = Symbol(
+                    "_GLOBAL_OFFSET_TABLE_",
+                    linker.got.base_address,
+                    0,  # size
+                    1,  # binding (global)
+                    1,  # type (object)
+                    0,  # section
+                    true,  # defined
+                    "synthetic"
+                )
+                linker.global_symbol_table["_GLOBAL_OFFSET_TABLE_"] = got_symbol
+                println("✅ Created synthetic _GLOBAL_OFFSET_TABLE_ at 0x$(string(linker.got.base_address, base=16))")
+            elseif sym == "__gmon_start__"
+                # Create weak __gmon_start__ symbol (profiling support - optional)
+                gmon_symbol = Symbol(
+                    "__gmon_start__",
+                    0,  # NULL pointer - weak symbol
+                    0,  # size
+                    2,  # binding (weak)
+                    2,  # type (function)
+                    0,  # section
+                    true,  # defined as weak
+                    "synthetic"
+                )
+                linker.global_symbol_table["__gmon_start__"] = gmon_symbol
+                println("✅ Created weak __gmon_start__ symbol")
+            else
+                # Keep other unresolved symbols for warning
+                push!(filtered_unresolved, sym)
+            end
+        end
+        unresolved = filtered_unresolved
+        
+        # Print remaining unresolved symbols
+        if !isempty(unresolved)
+            println("⚠️  Still unresolved after synthetic symbol creation:")
+            for sym in unresolved
+                println("    - $sym")
+            end
+        end
     end
     
     # Setup dynamic linking infrastructure (GOT/PLT) for external symbols
@@ -1251,13 +1374,19 @@ Mathematical model: generate_dynamic_metadata: LinkerState → DynamicSection
 Generate .dynamic section entries for runtime linking information.
 """
 function setup_dynamic_section!(linker::DynamicLinker, required_libraries::Vector{String} = String[])
-    # Add required library dependencies
+    # Add required library dependencies, but convert generic names to specific ones
     for lib in required_libraries
-        add_needed_library!(linker.dynamic_section, lib)
+        if lib == "c"
+            # Convert generic "c" to specific "libc.so.6"
+            add_needed_library!(linker.dynamic_section, "libc.so.6")
+        else
+            add_needed_library!(linker.dynamic_section, lib)
+        end
     end
     
-    # Add standard C library if not explicitly specified and system libraries are enabled
-    if !any(lib -> contains(lib, "libc"), required_libraries)
+    # Add standard C library if not already specified
+    has_libc = any(lib -> lib == "c" || contains(lib, "libc"), required_libraries)
+    if !has_libc
         add_needed_library!(linker.dynamic_section, "libc.so.6")
     end
     
