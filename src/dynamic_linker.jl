@@ -1014,26 +1014,64 @@ function link_to_executable(filenames::Vector{String}, output_filename::String;
                            enable_system_libraries::Bool = true,
                            library_search_paths::Vector{String} = String[],
                            library_names::Vector{String} = String[])
-    # Perform normal linking
-    linker = link_objects(filenames; base_address=base_address, 
+    
+    # PRODUCTION FIX: Include standard CRT objects like LLD does
+    # This ensures proper C runtime initialization and _start function
+    crt_objects = String[]
+    
+    # Standard CRT objects for PIE executables
+    scrt1_path = "/lib/x86_64-linux-gnu/Scrt1.o"
+    crti_path = "/lib/x86_64-linux-gnu/crti.o"
+    crtn_path = "/lib/x86_64-linux-gnu/crtn.o"
+    
+    # Add CRT objects if they exist
+    if isfile(scrt1_path)
+        push!(crt_objects, scrt1_path)
+        println("🔧 Adding CRT startup: $(scrt1_path)")
+    else
+        println("⚠️  Warning: Scrt1.o not found, using synthetic _start")
+    end
+    
+    if isfile(crti_path)
+        push!(crt_objects, crti_path)
+        println("🔧 Adding CRT init: $(crti_path)")
+    end
+    
+    # Include CRT objects BEFORE user objects (like LLD does)
+    all_files = vcat(crt_objects, filenames)
+    
+    # Add crtn.o AFTER user objects
+    if isfile(crtn_path)
+        push!(all_files, crtn_path)
+        println("🔧 Adding CRT finish: $(crtn_path)")
+    end
+    
+    # Add standard system libraries (libc)
+    standard_libraries = ["c"]  # This is -lc
+    all_library_names = vcat(library_names, standard_libraries)
+    
+    println("🔗 Linking with CRT objects: $(length(crt_objects)) CRT + $(length(filenames)) user objects")
+    
+    # Perform normal linking with CRT objects included
+    linker = link_objects(all_files; base_address=base_address, 
                          enable_system_libraries=enable_system_libraries,
                          library_search_paths=library_search_paths,
-                         library_names=library_names)
+                         library_names=all_library_names)
     
-    # Find entry point - prefer _start if available, otherwise use main with C runtime setup
+    # Find entry point - prefer _start from CRT objects
     entry_point = base_address + 0x1000  # Default entry point
     
-    # Check if we have _start symbol (proper C runtime)
+    # Check if we have _start symbol (from CRT objects or user code)
     if haskey(linker.global_symbol_table, "_start")
         entry_symbol_info = linker.global_symbol_table["_start"]
         if entry_symbol_info.defined
             entry_point = entry_symbol_info.value
-            println("Entry point set to '_start' at 0x$(string(entry_point, base=16))")
+            println("✅ Entry point set to '_start' at 0x$(string(entry_point, base=16)) (from CRT)")
         else
-            println("Warning: _start symbol is not defined")
+            println("⚠️  Warning: _start symbol is not defined")
         end
     elseif haskey(linker.global_symbol_table, entry_symbol)
-        # We have main but no _start - need to inject C runtime initialization
+        # Fallback: We have main but no _start - inject synthetic startup (should rarely happen with CRT)
         entry_symbol_info = linker.global_symbol_table[entry_symbol]
         if entry_symbol_info.defined
             main_address = entry_symbol_info.value
@@ -1043,10 +1081,10 @@ function link_to_executable(filenames::Vector{String}, output_filename::String;
             # Get updated main address after injection
             updated_main_address = linker.global_symbol_table[entry_symbol].value
             
-            println("Entry point set to synthetic '_start' at 0x$(string(entry_point, base=16))")
-            println("  → Will call '$entry_symbol' at 0x$(string(updated_main_address, base=16))")
+            println("⚠️  Entry point set to synthetic '_start' at 0x$(string(entry_point, base=16))")
+            println("    → Will call '$entry_symbol' at 0x$(string(updated_main_address, base=16))")
         else
-            println("Warning: Entry symbol '$entry_symbol' is not defined, using default entry point")
+            println("❌ Warning: Entry symbol '$entry_symbol' is not defined, using default entry point")
         end
     else
         println("Warning: Entry symbol '$entry_symbol' not found, using default entry point")
