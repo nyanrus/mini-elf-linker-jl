@@ -100,19 +100,20 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
     
     program_headers = ProgramHeader[]
     
-    # For PIE executables, use base address 0x0 to allow relocation
-    # For traditional executables, use fixed base address 0x400000
+    # For all executables, use 0x400000 base but for PIE, the difference is in the ELF type
+    # Kernel will handle PIE relocation regardless of the base address in headers
     pie_executable = !isempty(linker.dynamic_section.entries)
-    base_addr = pie_executable ? 0x0 : 0x400000
+    base_addr = 0x400000  # Standard Linux base address
     
     # Add PT_PHDR program header FIRST (required for PIE executables)
     # This describes the program header table itself and MUST come before LOAD segments
+    # CRITICAL FIX: PHDR virtual address must be within a LOAD segment's range
     push!(program_headers, ProgramHeader(
         PT_PHDR,                    # type
         PF_R,                      # flags (Read only)
         UInt64(elf_header_size),   # offset (right after ELF header)
-        UInt64(elf_header_size),   # vaddr (offset from first LOAD segment base)
-        UInt64(elf_header_size),   # paddr
+        base_addr + UInt64(elf_header_size),   # vaddr (base + offset, covered by first LOAD)
+        base_addr + UInt64(elf_header_size),   # paddr
         UInt64(ph_table_size),     # filesz (size of program header table)
         UInt64(ph_table_size),     # memsz
         0x8                        # align (8-byte alignment)
@@ -350,13 +351,13 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
             ELFCLASS64,                 # class
             ELFDATA2LSB,                # data
             EV_CURRENT,                 # version
-            ELFOSABI_GNU,               # osabi (GNU/Linux)
+            ELFOSABI_SYSV,              # osabi (System V - better compatibility)
             0,                          # abiversion
             (0, 0, 0, 0, 0, 0, 0),     # pad
             if !isempty(linker.dynamic_section.entries)
-                ET_DYN                      # type - DYN (Position-Independent Executable) when dynamic section exists
+                ET_DYN      # type - DYN (Position-Independent Executable) when dynamic section exists
             else
-                ET_EXEC                     # type - EXEC (Static Executable) for purely static executables
+                ET_EXEC     # type - EXEC (Static Executable) for purely static executables
             end,
             EM_X86_64,                  # machine
             UInt32(EV_CURRENT),         # version2
