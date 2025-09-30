@@ -145,14 +145,16 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
     # This LOAD segment must cover both ELF header and program header table
     # IMPORTANT: Start the LOAD segment from offset 0 to properly cover PHDR
     headers_end = elf_header_size + ph_table_size
+    # The first LOAD must start at file offset 0 and include enough to cover headers + interp
+    first_load_size = UInt64(max(0x1000, headers_end + 0x100))  # Extra space for INTERP
     push!(program_headers, ProgramHeader(
         PT_LOAD,                    # type
         PF_R,                      # flags (Read only - headers should not be executable!)
-        0,                         # offset (starts at file beginning)
+        0,                         # offset (starts at file beginning to cover PHDR)
         base_addr,                 # vaddr (base address - MUST cover PHDR range)
         base_addr,                 # paddr
-        UInt64(max(0x1000, headers_end)), # filesz (at least 4KB to cover headers)
-        UInt64(max(0x1000, headers_end)), # memsz
+        first_load_size,           # filesz (covers headers + interp)
+        first_load_size,           # memsz
         0x1000                     # align (4KB)
     ))
     
@@ -303,14 +305,11 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
         
         # Update program header file offsets
         current_offset = data_offset
-        first_load = true
+        first_load = true 
         for (i, ph) in enumerate(program_headers)
             if ph.type == PT_LOAD
-                if first_load && ph.vaddr == 0x400000  # First LOAD segment starts at offset 0 (includes ELF headers)
-                    program_headers[i] = ProgramHeader(
-                        ph.type, ph.flags, 0, ph.vaddr, ph.paddr,
-                        ph.filesz, ph.memsz, ph.align
-                    )
+                if first_load && ph.offset == 0  # First LOAD segment should start at offset 0 (includes ELF headers)
+                    # This segment already has correct offset of 0, keep it as is
                     first_load = false
                 else  # Subsequent LOAD segments start after data
                     program_headers[i] = ProgramHeader(
@@ -414,7 +413,7 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
             sort!(segment_regions, by=r -> r.base_address)
             
             # For segments, calculate the correct file offset based on virtual address mapping
-            if ph.type == PT_LOAD && ph.vaddr == 0x400000  # First LOAD segment includes ELF headers
+            if ph.type == PT_LOAD && ph.offset == 0  # First LOAD segment includes ELF headers
                 # PRODUCTION FIX: Correct file offset calculation for first LOAD segment
                 # The first LOAD segment contains headers + code, but code must be placed at page boundaries
                 

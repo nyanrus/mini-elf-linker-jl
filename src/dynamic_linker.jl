@@ -96,9 +96,9 @@ Base address α_base defaults to 0x400000 (standard Linux executable base).
 For PIE executables, use lower addresses compatible with 0x0 base.
 """
 function DynamicLinker(alpha_base::UInt64 = UInt64(0x400000); pie_mode::Bool = false)
-    # For PIE executables, use base address 0x0 to match LLD behavior
+    # For PIE executables, use a reasonable base address like LLD does
     if pie_mode
-        alpha_base = UInt64(0x0)   # Start at 0x0 for PIE executables like LLD
+        alpha_base = UInt64(0x1000)   # Start at 4KB for PIE executables like LLD, not 0x0
         got_offset = 0x3000   # GOT at 12KB (similar to LLD layout)
         plt_offset = 0x3100   # PLT at 12KB + 256 bytes  
     else
