@@ -93,11 +93,22 @@ Mathematical model: S_Δ initialization
 Create a new dynamic linker instance with enhanced structures for production-ready linking.
 
 Base address α_base defaults to 0x400000 (standard Linux executable base).
+For PIE executables, use lower addresses compatible with 0x0 base.
 """
-function DynamicLinker(alpha_base::UInt64 = UInt64(0x400000))
+function DynamicLinker(alpha_base::UInt64 = UInt64(0x400000); pie_mode::Bool = false)
+    # For PIE executables, use much lower base addresses compatible with 0x0 relocation
+    if pie_mode
+        alpha_base = UInt64(0x1000)  # Start at 4KB for PIE executables
+        got_offset = 0x10000   # GOT at 64KB
+        plt_offset = 0x11000   # PLT at 68KB  
+    else
+        got_offset = 0x100000  # GOT at base + 1MB for traditional executables
+        plt_offset = 0x110000  # PLT at base + 1MB + 64KB
+    end
+    
     # Initialize enhanced GOT and PLT structures
-    got = GlobalOffsetTable(alpha_base + 0x100000)  # GOT at base + 1MB  
-    plt = ProcedureLinkageTable(alpha_base + 0x110000)  # PLT at base + 1MB + 64KB
+    got = GlobalOffsetTable(alpha_base + got_offset)  
+    plt = ProcedureLinkageTable(alpha_base + plt_offset)
     relocation_dispatcher = RelocationDispatcher()
     dynamic_section = DynamicSection()
     
@@ -867,7 +878,15 @@ function link_objects(filenames::Vector{String}; base_address::UInt64 = UInt64(0
                      enable_system_libraries::Bool = true,
                      library_search_paths::Vector{String} = String[],
                      library_names::Vector{String} = String[])
-    linker = DynamicLinker(base_address)
+    # Detect if we'll need dynamic linking (PIE mode)
+    pie_mode = enable_system_libraries || !isempty(library_names)
+    
+    # Create linker with appropriate mode
+    linker = if pie_mode
+        DynamicLinker(pie_mode=true)  # Use PIE-compatible addresses
+    else
+        DynamicLinker(base_address)   # Use specified base address
+    end
     
     # Load all objects
     for filename in filenames

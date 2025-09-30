@@ -100,10 +100,10 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
     
     program_headers = ProgramHeader[]
     
-    # For all executables, use 0x400000 base but for PIE, the difference is in the ELF type
-    # Kernel will handle PIE relocation regardless of the base address in headers
+    # Use the linker's actual base address instead of hardcoded values
+    # For PIE executables, this will be low addresses; for static, higher addresses
     pie_executable = !isempty(linker.dynamic_section.entries)
-    base_addr = 0x400000  # Standard Linux base address
+    base_addr = linker.base_address  # Use linker's configured base address
     
     # Add PT_PHDR program header FIRST (required for PIE executables)
     # This describes the program header table itself and MUST come before LOAD segments

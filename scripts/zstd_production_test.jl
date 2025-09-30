@@ -189,7 +189,11 @@ function compile_zstd_objects(zstd_dir::String, config::ZSTDTestConfig)
             push!(object_files, obj_path)
             
             # Compile command
-            include_flags = ["-I$(joinpath(zstd_dir, \"lib\"))", "-I$(joinpath(zstd_dir, \"lib\", \"common\"))", "-I$(joinpath(zstd_dir, \"lib\", \"compress\"))", "-I$(joinpath(zstd_dir, \"lib\", \"decompress\"))"]
+            lib_include = joinpath(zstd_dir, "lib")
+            common_include = joinpath(zstd_dir, "lib", "common")
+            compress_include = joinpath(zstd_dir, "lib", "compress")
+            decompress_include = joinpath(zstd_dir, "lib", "decompress")
+            include_flags = ["-I$lib_include", "-I$common_include", "-I$compress_include", "-I$decompress_include"]
             cmd = `$(config.compiler) -c $src_file -o $obj_path $(include_flags) -O2 -DZSTD_MULTITHREAD`
             
             println("      Compiling: $(basename(src_file))")
@@ -201,7 +205,9 @@ function compile_zstd_objects(zstd_dir::String, config::ZSTDTestConfig)
         main_src = joinpath(prog_dir, "zstdcli.c")
         if isfile(main_src)
             main_obj = joinpath(build_dir, "zstdcli.o")
-            include_flags = ["-I$(joinpath(zstd_dir, \"lib\"))", "-I$(joinpath(zstd_dir, \"programs\"))"]
+            lib_include = joinpath(zstd_dir, "lib")
+            prog_include = joinpath(zstd_dir, "programs")
+            include_flags = ["-I$lib_include", "-I$prog_include"]
             cmd = `$(config.compiler) -c $main_src -o $main_obj $(include_flags) -O2 -DZSTD_MULTITHREAD`
             run(cmd)
             push!(object_files, main_obj)
