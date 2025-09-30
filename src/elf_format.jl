@@ -299,27 +299,55 @@ Complete the dynamic section by adding all required entries and NULL terminator.
 """
 function finalize_dynamic_section!(dynamic::DynamicSection, linker)
     # Add essential dynamic entries based on linker state
+    # Follow LLD order: NEEDED, FLAGS_1, DEBUG, RELA, RELASZ, RELAENT, RELACOUNT, JMPREL, PLTRELSZ, PLTGOT, PLTREL, SYMTAB, SYMENT, STRTAB, STRSZ, GNU_HASH, etc.
     
-    # String table
-    if !isempty(dynamic.string_table)
-        push!(dynamic.entries, DynamicEntry(DT_STRTAB, 0x0))  # Address filled later in writer
-        push!(dynamic.entries, DynamicEntry(DT_STRSZ, UInt64(length(dynamic.string_table))))
-    end
+    # Add DEBUG entry (needed for debugging support)
+    push!(dynamic.entries, DynamicEntry(DT_DEBUG, UInt64(0)))
+    
+    # RELA entries (for regular relocations)
+    push!(dynamic.entries, DynamicEntry(DT_RELA, UInt64(0)))    # Address filled later
+    push!(dynamic.entries, DynamicEntry(DT_RELASZ, UInt64(0)))  # Size filled later
+    push!(dynamic.entries, DynamicEntry(DT_RELAENT, UInt64(24))) # sizeof(Elf64_Rela) = 24
+    push!(dynamic.entries, DynamicEntry(0x6ffffff9, UInt64(0))) # RELACOUNT
     
     # PLT relocations - fix PLTGOT address
     if !isempty(linker.plt.entries)
-        # Use the actual GOT base address, not a hardcoded value
-        push!(dynamic.entries, DynamicEntry(DT_PLTGOT, linker.got.base_address))
-        # For now, add placeholder PLT relocation entries - these need proper implementation
-        push!(dynamic.entries, DynamicEntry(DT_PLTRELSZ, UInt64(48)))  # Placeholder size
-        push!(dynamic.entries, DynamicEntry(DT_PLTREL, UInt64(7)))     # DT_RELA = 7
         push!(dynamic.entries, DynamicEntry(DT_JMPREL, UInt64(0)))     # Address filled later
+        push!(dynamic.entries, DynamicEntry(DT_PLTRELSZ, UInt64(48)))  # Placeholder size
+        push!(dynamic.entries, DynamicEntry(DT_PLTGOT, linker.got.base_address))
+        push!(dynamic.entries, DynamicEntry(DT_PLTREL, UInt64(7)))     # DT_RELA = 7
     end
     
-    # Add PIE flag for position-independent executables
-    if !isempty(linker.dynamic_section.entries)
-        push!(dynamic.entries, DynamicEntry(0x6ffffffb, UInt64(0x08000001)))  # FLAGS_1: PIE
+    # Symbol table entries 
+    push!(dynamic.entries, DynamicEntry(DT_SYMTAB, UInt64(0)))   # Address filled later
+    push!(dynamic.entries, DynamicEntry(DT_SYMENT, UInt64(24)))  # sizeof(Elf64_Sym) = 24
+    
+    # String table
+    if !isempty(dynamic.string_table)
+        push!(dynamic.entries, DynamicEntry(DT_STRTAB, UInt64(0)))  # Address filled later in writer
+        push!(dynamic.entries, DynamicEntry(DT_STRSZ, UInt64(length(dynamic.string_table))))
     end
+    
+    # GNU Hash table (simplified - just placeholder)
+    push!(dynamic.entries, DynamicEntry(0x6ffffef5, UInt64(0))) # GNU_HASH - address filled later
+    
+    # Init/Fini arrays (for constructors/destructors)
+    push!(dynamic.entries, DynamicEntry(DT_INIT_ARRAY, UInt64(0)))     # Address filled later
+    push!(dynamic.entries, DynamicEntry(DT_INIT_ARRAYSZ, UInt64(8)))   # Size of init array
+    push!(dynamic.entries, DynamicEntry(DT_FINI_ARRAY, UInt64(0)))     # Address filled later  
+    push!(dynamic.entries, DynamicEntry(DT_FINI_ARRAYSZ, UInt64(8)))   # Size of fini array
+    
+    # Init/Fini functions (for startup/cleanup)
+    push!(dynamic.entries, DynamicEntry(DT_INIT, UInt64(0)))           # Address filled later
+    push!(dynamic.entries, DynamicEntry(DT_FINI, UInt64(0)))           # Address filled later
+    
+    # Version entries (for symbol versioning)
+    push!(dynamic.entries, DynamicEntry(0x6ffffff0, UInt64(0)))        # VERSYM - address filled later
+    push!(dynamic.entries, DynamicEntry(0x6ffffffe, UInt64(0)))        # VERNEED - address filled later
+    push!(dynamic.entries, DynamicEntry(0x6fffffff, UInt64(1)))        # VERNEEDNUM - count
+    
+    # Add PIE flag for position-independent executables
+    push!(dynamic.entries, DynamicEntry(0x6ffffffb, UInt64(0x08000001)))  # FLAGS_1: PIE
     
     # Terminator - must be last
     push!(dynamic.entries, DynamicEntry(DT_NULL, 0))

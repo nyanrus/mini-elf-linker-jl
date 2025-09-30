@@ -119,6 +119,28 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
         0x8                        # align (8-byte alignment)
     ))
     
+    # Add PT_INTERP program header early (must be before LOAD segments)
+    if !isempty(linker.dynamic_section.entries)
+        # Standard Linux x86-64 dynamic linker path
+        interp_path = "/lib64/ld-linux-x86-64.so.2"
+        interp_size = UInt64(length(interp_path) + 1)  # +1 for null terminator
+        
+        # Find a suitable location for the interpreter string (after headers)
+        interp_offset = elf_header_size + ph_table_size + 0x40  # Some padding
+        interp_vaddr = base_addr + interp_offset
+        
+        push!(program_headers, ProgramHeader(
+            PT_INTERP,                  # type
+            PF_R,                      # flags (Read only)
+            interp_offset,             # offset in file
+            interp_vaddr,              # virtual address
+            interp_vaddr,              # physical address  
+            interp_size,               # size in file
+            interp_size,               # size in memory
+            0x1                        # align (byte alignment)
+        ))
+    end
+    
     # First LOAD segment: ELF headers + Program headers (Read-only, NO execute!)
     # This LOAD segment must cover both ELF header and program header table
     # IMPORTANT: Start the LOAD segment from offset 0 to properly cover PHDR
@@ -191,28 +213,6 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
             total_size,                # filesz
             total_size,                # memsz
             0x1000                     # align (4KB)
-        ))
-    end
-    
-    # Add PT_INTERP program header for dynamic linking (if dynamic symbols present)
-    if !isempty(linker.dynamic_section.entries)
-        # Standard Linux x86-64 dynamic linker path
-        interp_path = "/lib64/ld-linux-x86-64.so.2"
-        interp_size = UInt64(length(interp_path) + 1)  # +1 for null terminator
-        
-        # Find a suitable location for the interpreter string (after headers)
-        interp_offset = elf_header_size + ph_table_size + 0x40  # Some padding
-        interp_vaddr = base_addr + interp_offset
-        
-        push!(program_headers, ProgramHeader(
-            PT_INTERP,                  # type
-            PF_R,                      # flags (Read only)
-            interp_offset,             # offset in file
-            interp_vaddr,              # virtual address
-            interp_vaddr,              # physical address  
-            interp_size,               # size in file
-            interp_size,               # size in memory
-            0x1                        # align (byte alignment)
         ))
     end
     
