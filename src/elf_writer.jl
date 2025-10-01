@@ -89,12 +89,15 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
     
     for region in linker.memory_regions
         perms = region.permissions
-        if (perms & 0x4) != 0  # Execute permission - text segment
+        if (perms & 0x1) != 0  # Execute permission - text segment
             push!(text_regions, region)
+            println("DEBUG: Text region at 0x$(string(region.base_address, base=16)), size=$(region.size), perms=0x$(string(perms, base=16))")
         elseif (perms & 0x2) != 0  # Write permission - data segment  
             push!(data_regions, region)
+            println("DEBUG: Data region at 0x$(string(region.base_address, base=16)), size=$(region.size), perms=0x$(string(perms, base=16))")
         else  # Read-only - rodata segment
             push!(rodata_regions, region)
+            println("DEBUG: RO data region at 0x$(string(region.base_address, base=16)), size=$(region.size), perms=0x$(string(perms, base=16))")
         end
     end
     
@@ -160,20 +163,10 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
     ))
     
     # Second LOAD segment: Executable code regions (Read + Execute)
-    # Extended to cover all necessary regions including GOT, symbol tables, etc.
+    # Keep this segment for executable code only, don't extend to cover data
     if !isempty(text_regions)
         min_text_addr = minimum(r.base_address for r in text_regions)
         max_text_addr = maximum(r.base_address + r.size for r in text_regions)
-        
-        # Extend to cover all memory regions from the linker
-        # This ensures GOT, symbol tables, relocation tables, etc. are all covered
-        if !isempty(linker.memory_regions)
-            global_max_addr = maximum(r.base_address + r.size for r in linker.memory_regions)
-            # Only extend if the global max is beyond current text segment
-            if global_max_addr > max_text_addr
-                max_text_addr = global_max_addr
-            end
-        end
         
         # Calculate file offset for text segment - must match write_elf_executable calculation
         # data_offset = elf_header_size + ph_table_size, then page-aligned
@@ -192,6 +185,44 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
             total_size,                # memsz
             0x1000                     # align (4KB)
         ))
+    end
+    
+    # Third LOAD segment: Read-only data and dynamic linking structures
+    # This includes GOT (writable but starts as RO), symbol tables, relocation tables
+    if !isempty(rodata_regions) || !isempty(data_regions) || !isempty(linker.memory_regions)
+        # Find all non-executable regions that need to be loaded
+        non_exec_regions = filter(linker.memory_regions) do r
+            (r.permissions & 0x1) == 0  # Not executable
+        end
+        
+        if !isempty(non_exec_regions)
+            # Find the actual end of executable code (not including extensions)
+            actual_text_end = !isempty(text_regions) ? maximum(r.base_address + r.size for r in text_regions) : UInt64(0)
+            
+            # Get all non-exec regions
+            if !isempty(non_exec_regions)
+                min_addr = minimum(r.base_address for r in non_exec_regions)
+                max_addr = maximum(r.base_address + r.size for r in non_exec_regions)
+                total_size = max_addr - min_addr
+                
+                # Determine permissions - RW if any region is writable
+                has_write = any(r -> (r.permissions & 0x2) != 0, non_exec_regions)
+                flags = has_write ? (PF_R | PF_W) : PF_R
+                
+                println("DEBUG: Creating data LOAD segment: 0x$(string(min_addr, base=16)) to 0x$(string(max_addr, base=16)), size=0x$(string(total_size, base=16)), flags=$(has_write ? "RW" : "R")")
+                
+                push!(program_headers, ProgramHeader(
+                    PT_LOAD,                    # type
+                    flags,                     # flags
+                    0,                         # offset (to be filled later)
+                    min_addr,                  # vaddr
+                    min_addr,                  # paddr
+                    total_size,                # filesz
+                    total_size,                # memsz
+                    0x1000                     # align (4KB)
+                ))
+            end
+        end
     end
     
     # Create rodata segment (R) if we have read-only regions
