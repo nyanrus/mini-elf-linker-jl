@@ -541,10 +541,31 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
         end
         
         for region in critical_regions
-            file_offset = region.base_address
-            println("🔧 Writing critical region at vaddr 0x$(string(region.base_address, base=16)) to file offset 0x$(string(file_offset, base=16)) ($(region.size) bytes, perms=0x$(string(region.permissions, base=16)))")
-            seek(io, file_offset)
-            write(io, region.data)
+            # Calculate correct file offset based on LOAD segment mapping
+            # Find the LOAD segment that contains this region's virtual address
+            containing_load = nothing
+            for ph in program_headers
+                if ph.type == PT_LOAD && region.base_address >= ph.vaddr && region.base_address < ph.vaddr + ph.memsz
+                    containing_load = ph
+                    break
+                end
+            end
+            
+            if containing_load !== nothing
+                # Calculate file offset using the LOAD segment's mapping
+                # file_offset = ph.offset + (vaddr - ph.vaddr)
+                file_offset = containing_load.offset + (region.base_address - containing_load.vaddr)
+                println("🔧 Writing critical region at vaddr 0x$(string(region.base_address, base=16)) to file offset 0x$(string(file_offset, base=16)) ($(region.size) bytes, perms=0x$(string(region.permissions, base=16)))")
+                seek(io, file_offset)
+                write(io, region.data)
+            else
+                # No containing LOAD segment - this shouldn't happen, but fall back to vaddr = offset
+                file_offset = region.base_address
+                @warn "Critical region at vaddr 0x$(string(region.base_address, base=16)) not in any LOAD segment"
+                println("🔧 Writing orphan critical region at vaddr 0x$(string(region.base_address, base=16)) to file offset 0x$(string(file_offset, base=16)) ($(region.size) bytes, perms=0x$(string(region.permissions, base=16)))")
+                seek(io, file_offset)
+                write(io, region.data)
+            end
         end
     end
     
