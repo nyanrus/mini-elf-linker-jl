@@ -11,15 +11,13 @@ MINI_LINKER="$SCRIPT_DIR/mini_elf_linker_cli.jl"
 OUTPUT_FILE=""
 OBJECT_FILES=()
 LIBRARIES=()
-i=0
 
-while [[ $i -lt $# ]]; do
-    arg="${!i}"
+# Process all command-line arguments (skip $0 which is script name)
+for arg in "$@"; do
     case "$arg" in
         -o)
-            # Next argument is the output file
-            ((i++))
-            OUTPUT_FILE="${!i}"
+            # Next argument is the output file - we need to handle this specially
+            OUTPUT_FILE_NEXT=true
             ;;
         *.o)
             # Object file
@@ -30,17 +28,27 @@ while [[ $i -lt $# ]]; do
             LIBRARIES+=("$arg")
             ;;
         --dynamic-linker)
-            # Skip dynamic linker specification and its argument
-            ((i++))
+            # Skip dynamic linker specification
+            SKIP_NEXT=true
             ;;
         -L*)
             # Library search path - ignore for now
             ;;
         *)
-            # Other arguments - ignore for now
+            # Handle -o argument value
+            if [[ "$OUTPUT_FILE_NEXT" == "true" ]]; then
+                OUTPUT_FILE="$arg"
+                OUTPUT_FILE_NEXT=false
+            elif [[ "$SKIP_NEXT" == "true" ]]; then
+                SKIP_NEXT=false
+            else
+                # Other arguments - could be object files without .o extension
+                if [[ -f "$arg" ]]; then
+                    OBJECT_FILES+=("$arg")
+                fi
+            fi
             ;;
     esac
-    ((i++))
 done
 
 # Set default output if not specified
