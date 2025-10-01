@@ -160,9 +160,20 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
     ))
     
     # Second LOAD segment: Executable code regions (Read + Execute)
+    # Extended to cover all necessary regions including GOT, symbol tables, etc.
     if !isempty(text_regions)
         min_text_addr = minimum(r.base_address for r in text_regions)
         max_text_addr = maximum(r.base_address + r.size for r in text_regions)
+        
+        # Extend to cover all memory regions from the linker
+        # This ensures GOT, symbol tables, relocation tables, etc. are all covered
+        if !isempty(linker.memory_regions)
+            global_max_addr = maximum(r.base_address + r.size for r in linker.memory_regions)
+            # Only extend if the global max is beyond current text segment
+            if global_max_addr > max_text_addr
+                max_text_addr = global_max_addr
+            end
+        end
         
         # Calculate file offset for text segment - must match write_elf_executable calculation
         # data_offset = elf_header_size + ph_table_size, then page-aligned
@@ -184,39 +195,63 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
     end
     
     # Create rodata segment (R) if we have read-only regions
+    # Skip if it would overlap with text or first LOAD segment
     if !isempty(rodata_regions)
         min_addr = minimum(r.base_address for r in rodata_regions)
         max_addr = maximum(r.base_address + r.size for r in rodata_regions)
         total_size = max_addr - min_addr
         
-        push!(program_headers, ProgramHeader(
-            PT_LOAD,                    # type
-            PF_R,                      # flags (Read only)
-            0,                         # offset (to be filled)
-            min_addr,                  # vaddr
-            min_addr,                  # paddr
-            total_size,                # filesz
-            total_size,                # memsz
-            0x1000                     # align (4KB)
-        ))
+        # Only create rodata segment if it doesn't overlap with existing segments
+        overlaps = false
+        for ph in program_headers
+            if ph.type == PT_LOAD && min_addr < ph.vaddr + ph.memsz && max_addr > ph.vaddr
+                overlaps = true
+                break
+            end
+        end
+        
+        if !overlaps
+            push!(program_headers, ProgramHeader(
+                PT_LOAD,                    # type
+                PF_R,                      # flags (Read only)
+                0,                         # offset (to be filled)
+                min_addr,                  # vaddr
+                min_addr,                  # paddr
+                total_size,                # filesz
+                total_size,                # memsz
+                0x1000                     # align (4KB)
+            ))
+        end
     end
     
     # Create data segment (R+W) if we have writable regions  
+    # Skip if it would overlap with existing segments
     if !isempty(data_regions)
         min_addr = minimum(r.base_address for r in data_regions)
         max_addr = maximum(r.base_address + r.size for r in data_regions)
         total_size = max_addr - min_addr
         
-        push!(program_headers, ProgramHeader(
-            PT_LOAD,                    # type
-            PF_R | PF_W,               # flags (Read + Write)
-            0,                         # offset (to be filled)
-            min_addr,                  # vaddr
-            min_addr,                  # paddr
-            total_size,                # filesz
-            total_size,                # memsz
-            0x1000                     # align (4KB)
-        ))
+        # Only create data segment if it doesn't overlap with existing segments
+        overlaps = false
+        for ph in program_headers
+            if ph.type == PT_LOAD && min_addr < ph.vaddr + ph.memsz && max_addr > ph.vaddr
+                overlaps = true
+                break
+            end
+        end
+        
+        if !overlaps
+            push!(program_headers, ProgramHeader(
+                PT_LOAD,                    # type
+                PF_R | PF_W,               # flags (Read + Write)
+                0,                         # offset (to be filled)
+                min_addr,                  # vaddr
+                min_addr,                  # paddr
+                total_size,                # filesz
+                total_size,                # memsz
+                0x1000                     # align (4KB)
+            ))
+        end
     end
     
     # Add PT_DYNAMIC program header for dynamic section
