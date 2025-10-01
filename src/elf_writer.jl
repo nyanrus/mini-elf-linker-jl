@@ -162,29 +162,59 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
         0x1000                     # align (4KB)
     ))
     
-    # Second LOAD segment: Executable code regions (Read + Execute)
-    # Keep this segment for executable code only, don't extend to cover data
+    # Second and subsequent LOAD segments: Executable code regions (Read + Execute)
+    # Group contiguous text regions and create a LOAD segment for each group
     if !isempty(text_regions)
-        min_text_addr = minimum(r.base_address for r in text_regions)
-        max_text_addr = maximum(r.base_address + r.size for r in text_regions)
+        # Group contiguous text regions to avoid overlaps
+        # Sort by address
+        sorted_text = sort(text_regions, by=r -> r.base_address)
         
-        # Calculate file offset for text segment - must match write_elf_executable calculation
-        # data_offset = elf_header_size + ph_table_size, then page-aligned
-        data_offset_calc = elf_header_size + ph_table_size
-        page_size = 0x1000
-        text_file_offset = (data_offset_calc + page_size - 1) & ~(page_size - 1)
-        total_size = max_text_addr - min_text_addr
+        # Find contiguous groups
+        text_groups = []
+        current_group = [sorted_text[1]]
         
-        push!(program_headers, ProgramHeader(
-            PT_LOAD,                    # type
-            PF_R | PF_X,               # flags (Read + Execute) 
-            text_file_offset,          # offset (after headers)
-            min_text_addr,             # vaddr (where text is loaded)
-            min_text_addr,             # paddr
-            total_size,                # filesz
-            total_size,                # memsz
-            0x1000                     # align (4KB)
-        ))
+        for i in 2:length(sorted_text)
+            prev_region = current_group[end]
+            curr_region = sorted_text[i]
+            prev_end = prev_region.base_address + prev_region.size
+            
+            # If current region starts within 0x100 bytes of previous end, add to group
+            if curr_region.base_address <= prev_end + 0x100
+                push!(current_group, curr_region)
+            else
+                # Start new group
+                push!(text_groups, current_group)
+                current_group = [curr_region]
+            end
+        end
+        push!(text_groups, current_group)
+        
+        # Create LOAD segment for each text group
+        for (group_idx, group) in enumerate(text_groups)
+            min_addr = minimum(r.base_address for r in group)
+            max_addr = maximum(r.base_address + r.size for r in group)
+            total_size = max_addr - min_addr
+            
+            # Calculate file offset - first group gets page-aligned offset, others get filled later
+            file_offset = if group_idx == 1
+                data_offset_calc = elf_header_size + ph_table_size
+                page_size = 0x1000
+                (data_offset_calc + page_size - 1) & ~(page_size - 1)
+            else
+                0  # Will be filled later
+            end
+            
+            push!(program_headers, ProgramHeader(
+                PT_LOAD,                    # type
+                PF_R | PF_X,               # flags (Read + Execute) 
+                file_offset,               # offset
+                min_addr,                  # vaddr
+                min_addr,                  # paddr
+                total_size,                # filesz
+                total_size,                # memsz
+                0x1000                     # align (4KB)
+            ))
+        end
     end
     
     # Third LOAD segment: Read-only data and dynamic linking structures
