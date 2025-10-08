@@ -656,9 +656,14 @@ function allocate_memory_regions!(linker::DynamicLinker)
         
         # Add each dynamic symbol
         for symbol in dynamic_syms
-            # st_name (4 bytes) - offset in string table (we'll use 0 for now)
+            # st_name (4 bytes) - offset in string table
+            # Add symbol name to dynamic string table and get offset
+            name_offset = UInt32(0)
+            if !isempty(symbol.name)
+                name_offset = add_dynamic_string!(linker.dynamic_section, symbol.name)
+            end
             for i in 0:3
-                push!(dynsym_data, 0x00)
+                push!(dynsym_data, UInt8((name_offset >> (8*i)) & 0xff))
             end
             
             # st_info (1 byte) - symbol type and binding
@@ -697,6 +702,17 @@ function allocate_memory_regions!(linker::DynamicLinker)
         for i in 1:length(linker.dynamic_section.entries)
             if linker.dynamic_section.entries[i].tag == DT_SYMTAB
                 linker.dynamic_section.entries[i] = DynamicEntry(DT_SYMTAB, dynsym_base)
+                # Also update serialized data (will be done later in batch)
+                break
+            end
+        end
+        
+        # Update DT_STRSZ with new string table size (after adding symbol names)
+        for i in 1:length(linker.dynamic_section.entries)
+            if linker.dynamic_section.entries[i].tag == DT_STRSZ
+                new_size = UInt64(length(linker.dynamic_section.string_table))
+                linker.dynamic_section.entries[i] = DynamicEntry(DT_STRSZ, new_size)
+                println("Updated DT_STRSZ to $(new_size) bytes after adding symbol names")
                 break
             end
         end
@@ -937,6 +953,64 @@ function allocate_memory_regions!(linker::DynamicLinker)
                     break
                 end
             end
+        end
+    end
+    
+    # CRITICAL FIX: Update ALL dynamic section entries in the serialized data
+    # The DynamicEntry objects have been updated with correct addresses, but the serialized
+    # bytes in the dynamic_region.data still have placeholder zeros.
+    # We must update the serialized data to match the DynamicEntry objects.
+    if !isempty(linker.dynamic_section.entries)
+        # Find the dynamic section memory region
+        dynamic_region = nothing
+        for region in linker.memory_regions
+            if region.permissions == 0x4 && length(region.data) == length(linker.dynamic_section.entries) * 16
+                dynamic_region = region
+                break
+            end
+        end
+        
+        if dynamic_region !== nothing
+            println("🔧 Updating dynamic section serialized data with correct addresses...")
+            # Re-serialize all dynamic entries with updated addresses
+            for i in 1:length(linker.dynamic_section.entries)
+                entry = linker.dynamic_section.entries[i]
+                offset = (i - 1) * 16
+                
+                # Write tag (8 bytes, little-endian)
+                for j in 0:7
+                    dynamic_region.data[offset + j + 1] = UInt8((entry.tag >> (8*j)) & 0xff)
+                end
+                
+                # Write value (8 bytes, little-endian)
+                for j in 0:7
+                    dynamic_region.data[offset + 8 + j + 1] = UInt8((entry.value >> (8*j)) & 0xff)
+                end
+                
+                # Debug: print non-zero entries
+                if entry.value != 0 || entry.tag == DT_NULL
+                    tag_name = if entry.tag == DT_NEEDED
+                        "NEEDED"
+                    elseif entry.tag == DT_SYMTAB
+                        "SYMTAB"
+                    elseif entry.tag == DT_STRTAB
+                        "STRTAB"
+                    elseif entry.tag == DT_RELA
+                        "RELA"
+                    elseif entry.tag == DT_JMPREL
+                        "JMPREL"
+                    elseif entry.tag == DT_PLTGOT
+                        "PLTGOT"
+                    elseif entry.tag == DT_NULL
+                        "NULL"
+                    else
+                        "0x$(string(entry.tag, base=16))"
+                    end
+                    println("   Entry $i: $tag_name = 0x$(string(entry.value, base=16))")
+                end
+            end
+        else
+            @warn "Could not find dynamic section memory region to update serialized data"
         end
     end
     
