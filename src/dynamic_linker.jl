@@ -1154,7 +1154,7 @@ Apply a relocation to a memory region by patching the binary data.
 """
 function apply_relocation_to_region!(region::MemoryRegion, offset::UInt64, value::Int64, size::Int)
     # offset is relative to the start of the region
-    pos = Int(offset) + 1  # Julia arrays are 1-indexed
+    pos = firstindex(region.data) + Int(offset)
     
     if pos + size - 1 <= length(region.data)
         # Apply the relocation based on size

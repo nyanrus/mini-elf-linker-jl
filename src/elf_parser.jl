@@ -150,7 +150,7 @@ function get_string_from_table(string_table::Vector{UInt8}, offset::UInt32)
         return ""
     end
     
-    start_idx = offset + 1  # Julia 1-based indexing
+    start_idx = firstindex(string_table) + offset
     end_idx = start_idx
     
     # Find null terminator
@@ -273,7 +273,7 @@ function parse_elf_file(filename::String)
         sections = parse_section_headers(io, header)
         
         # Read section header string table
-        shstrtab_section = sections[header.shstrndx + 1]  # +1 for Julia indexing
+        shstrtab_section = sections[begin + header.shstrndx]
         string_table = read_string_table(io, shstrtab_section)
         
         # Find and parse symbol table
@@ -287,7 +287,7 @@ function parse_elf_file(filename::String)
             
             # Read symbol string table
             if symtab_section.link > 0 && symtab_section.link < length(sections)
-                strtab_section = sections[symtab_section.link + 1]  # +1 for Julia 1-based indexing
+                strtab_section = sections[begin + symtab_section.link]
                 symbol_string_table = read_string_table(io, strtab_section)
             end
         end
