@@ -198,7 +198,7 @@ function validate_program_headers(elf_data::Vector{UInt8}, filename::String)
     has_interp = false
     
     for i in 0:(e_phnum-1)
-        offset = Int(e_phoff + 1 + i * e_phentsize)  # +1 for Julia 1-based indexing
+        offset = Int(firstindex(elf_data) + e_phoff + i * e_phentsize)
         if offset + 56 <= length(elf_data)
             p_type = reinterpret(UInt32, elf_data[offset:offset+3])[1]
             

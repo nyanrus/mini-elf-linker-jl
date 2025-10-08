@@ -979,12 +979,12 @@ function allocate_memory_regions!(linker::DynamicLinker)
                 
                 # Write tag (8 bytes, little-endian)
                 for j in 0:7
-                    dynamic_region.data[offset + j + 1] = UInt8((entry.tag >> (8*j)) & 0xff)
+                    dynamic_region.data[firstindex(dynamic_region.data) + offset + j] = UInt8((entry.tag >> (8*j)) & 0xff)
                 end
                 
                 # Write value (8 bytes, little-endian)
                 for j in 0:7
-                    dynamic_region.data[offset + 8 + j + 1] = UInt8((entry.value >> (8*j)) & 0xff)
+                    dynamic_region.data[firstindex(dynamic_region.data) + offset + 8 + j] = UInt8((entry.value >> (8*j)) & 0xff)
                 end
                 
                 # Debug: print non-zero entries
@@ -1154,7 +1154,7 @@ Apply a relocation to a memory region by patching the binary data.
 """
 function apply_relocation_to_region!(region::MemoryRegion, offset::UInt64, value::Int64, size::Int)
     # offset is relative to the start of the region
-    pos = Int(offset) + 1  # Julia arrays are 1-indexed
+    pos = firstindex(region.data) + Int(offset)
     
     if pos + size - 1 <= length(region.data)
         # Apply the relocation based on size
