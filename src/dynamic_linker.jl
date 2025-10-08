@@ -656,9 +656,14 @@ function allocate_memory_regions!(linker::DynamicLinker)
         
         # Add each dynamic symbol
         for symbol in dynamic_syms
-            # st_name (4 bytes) - offset in string table (we'll use 0 for now)
+            # st_name (4 bytes) - offset in string table
+            # Add symbol name to dynamic string table and get offset
+            name_offset = UInt32(0)
+            if !isempty(symbol.name)
+                name_offset = add_dynamic_string!(linker.dynamic_section, symbol.name)
+            end
             for i in 0:3
-                push!(dynsym_data, 0x00)
+                push!(dynsym_data, UInt8((name_offset >> (8*i)) & 0xff))
             end
             
             # st_info (1 byte) - symbol type and binding
@@ -698,6 +703,16 @@ function allocate_memory_regions!(linker::DynamicLinker)
             if linker.dynamic_section.entries[i].tag == DT_SYMTAB
                 linker.dynamic_section.entries[i] = DynamicEntry(DT_SYMTAB, dynsym_base)
                 # Also update serialized data (will be done later in batch)
+                break
+            end
+        end
+        
+        # Update DT_STRSZ with new string table size (after adding symbol names)
+        for i in 1:length(linker.dynamic_section.entries)
+            if linker.dynamic_section.entries[i].tag == DT_STRSZ
+                new_size = UInt64(length(linker.dynamic_section.string_table))
+                linker.dynamic_section.entries[i] = DynamicEntry(DT_STRSZ, new_size)
+                println("Updated DT_STRSZ to $(new_size) bytes after adding symbol names")
                 break
             end
         end
