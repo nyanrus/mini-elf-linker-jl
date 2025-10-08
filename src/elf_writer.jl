@@ -89,12 +89,15 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
     
     for region in linker.memory_regions
         perms = region.permissions
-        if (perms & 0x4) != 0  # Execute permission - text segment
+        if (perms & 0x1) != 0  # Execute permission - text segment
             push!(text_regions, region)
+            println("DEBUG: Text region at 0x$(string(region.base_address, base=16)), size=$(region.size), perms=0x$(string(perms, base=16))")
         elseif (perms & 0x2) != 0  # Write permission - data segment  
             push!(data_regions, region)
+            println("DEBUG: Data region at 0x$(string(region.base_address, base=16)), size=$(region.size), perms=0x$(string(perms, base=16))")
         else  # Read-only - rodata segment
             push!(rodata_regions, region)
+            println("DEBUG: RO data region at 0x$(string(region.base_address, base=16)), size=$(region.size), perms=0x$(string(perms, base=16))")
         end
     end
     
@@ -107,94 +110,20 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
     
     # Add PT_PHDR program header FIRST (required for PIE executables)
     # This describes the program header table itself and MUST come before LOAD segments
-    # CRITICAL FIX: PHDR virtual address must be at the start of the first LOAD segment
+    # CRITICAL FIX: PHDR virtual address must match the memory layout where first LOAD starts at base_addr
+    # and covers the program headers at offset elf_header_size
     push!(program_headers, ProgramHeader(
         PT_PHDR,                    # type
         PF_R,                      # flags (Read only)
         UInt64(elf_header_size),   # offset (right after ELF header)
-        base_addr + UInt64(elf_header_size),   # vaddr (base + offset)
-        base_addr + UInt64(elf_header_size),   # paddr
+        UInt64(elf_header_size),   # vaddr (should be just the offset for proper coverage)
+        UInt64(elf_header_size),   # paddr
         UInt64(ph_table_size),     # filesz (size of program header table)
         UInt64(ph_table_size),     # memsz
         0x8                        # align (8-byte alignment)
     ))
     
-    # First LOAD segment: ELF headers + Program headers (Read-only, NO execute!)
-    # This LOAD segment must cover both ELF header and program header table
-    # IMPORTANT: Start the LOAD segment from offset 0 to properly cover PHDR
-    headers_end = elf_header_size + ph_table_size
-    push!(program_headers, ProgramHeader(
-        PT_LOAD,                    # type
-        PF_R,                      # flags (Read only - headers should not be executable!)
-        0,                         # offset (starts at file beginning)
-        base_addr,                 # vaddr (base address - MUST cover PHDR range)
-        base_addr,                 # paddr
-        UInt64(max(0x1000, headers_end)), # filesz (at least 4KB to cover headers)
-        UInt64(max(0x1000, headers_end)), # memsz
-        0x1000                     # align (4KB)
-    ))
-    
-    # Second LOAD segment: Executable code regions (Read + Execute)
-    if !isempty(text_regions)
-        min_text_addr = minimum(r.base_address for r in text_regions)
-        max_text_addr = maximum(r.base_address + r.size for r in text_regions)
-        
-        # Calculate file offset for text segment - must match write_elf_executable calculation
-        # data_offset = elf_header_size + ph_table_size, then page-aligned
-        data_offset_calc = elf_header_size + ph_table_size
-        page_size = 0x1000
-        text_file_offset = (data_offset_calc + page_size - 1) & ~(page_size - 1)
-        total_size = max_text_addr - min_text_addr
-        
-        push!(program_headers, ProgramHeader(
-            PT_LOAD,                    # type
-            PF_R | PF_X,               # flags (Read + Execute) 
-            text_file_offset,          # offset (after headers)
-            min_text_addr,             # vaddr (where text is loaded)
-            min_text_addr,             # paddr
-            total_size,                # filesz
-            total_size,                # memsz
-            0x1000                     # align (4KB)
-        ))
-    end
-    
-    # Create rodata segment (R) if we have read-only regions
-    if !isempty(rodata_regions)
-        min_addr = minimum(r.base_address for r in rodata_regions)
-        max_addr = maximum(r.base_address + r.size for r in rodata_regions)
-        total_size = max_addr - min_addr
-        
-        push!(program_headers, ProgramHeader(
-            PT_LOAD,                    # type
-            PF_R,                      # flags (Read only)
-            0,                         # offset (to be filled)
-            min_addr,                  # vaddr
-            min_addr,                  # paddr
-            total_size,                # filesz
-            total_size,                # memsz
-            0x1000                     # align (4KB)
-        ))
-    end
-    
-    # Create data segment (R+W) if we have writable regions  
-    if !isempty(data_regions)
-        min_addr = minimum(r.base_address for r in data_regions)
-        max_addr = maximum(r.base_address + r.size for r in data_regions)
-        total_size = max_addr - min_addr
-        
-        push!(program_headers, ProgramHeader(
-            PT_LOAD,                    # type
-            PF_R | PF_W,               # flags (Read + Write)
-            0,                         # offset (to be filled)
-            min_addr,                  # vaddr
-            min_addr,                  # paddr
-            total_size,                # filesz
-            total_size,                # memsz
-            0x1000                     # align (4KB)
-        ))
-    end
-    
-    # Add PT_INTERP program header for dynamic linking (if dynamic symbols present)
+    # Add PT_INTERP program header early (must be before LOAD segments)
     if !isempty(linker.dynamic_section.entries)
         # Standard Linux x86-64 dynamic linker path
         interp_path = "/lib64/ld-linux-x86-64.so.2"
@@ -202,7 +131,7 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
         
         # Find a suitable location for the interpreter string (after headers)
         interp_offset = elf_header_size + ph_table_size + 0x40  # Some padding
-        interp_vaddr = base_addr + interp_offset
+        interp_vaddr = interp_offset  # Use same as offset for first LOAD coverage
         
         push!(program_headers, ProgramHeader(
             PT_INTERP,                  # type
@@ -214,6 +143,176 @@ function create_program_headers(linker::DynamicLinker, elf_header_size::UInt64, 
             interp_size,               # size in memory
             0x1                        # align (byte alignment)
         ))
+    end
+    
+    # First LOAD segment: ELF headers + Program headers (Read-only, NO execute!)
+    # This LOAD segment must cover both ELF header and program header table
+    # IMPORTANT: Start the LOAD segment from offset 0 and virtual address 0 to properly cover PHDR
+    headers_end = elf_header_size + ph_table_size
+    # The first LOAD must start at file offset 0 and virtual address 0 like LLD
+    first_load_size = UInt64(max(0x1000, headers_end + 0x100))  # Extra space for INTERP
+    push!(program_headers, ProgramHeader(
+        PT_LOAD,                    # type
+        PF_R,                      # flags (Read only - headers should not be executable!)
+        0,                         # offset (starts at file beginning to cover PHDR)
+        0,                         # vaddr (start at 0 like LLD to cover PHDR properly)
+        0,                         # paddr
+        first_load_size,           # filesz (covers headers + interp)
+        first_load_size,           # memsz
+        0x1000                     # align (4KB)
+    ))
+    
+    # Second and subsequent LOAD segments: Executable code regions (Read + Execute)
+    # Group contiguous text regions and create a LOAD segment for each group
+    if !isempty(text_regions)
+        # Group contiguous text regions to avoid overlaps
+        # Sort by address
+        sorted_text = sort(text_regions, by=r -> r.base_address)
+        
+        # Find contiguous groups
+        text_groups = []
+        current_group = [sorted_text[1]]
+        
+        for i in 2:length(sorted_text)
+            prev_region = current_group[end]
+            curr_region = sorted_text[i]
+            prev_end = prev_region.base_address + prev_region.size
+            
+            # If current region starts within 0x100 bytes of previous end, add to group
+            if curr_region.base_address <= prev_end + 0x100
+                push!(current_group, curr_region)
+            else
+                # Start new group
+                push!(text_groups, current_group)
+                current_group = [curr_region]
+            end
+        end
+        push!(text_groups, current_group)
+        
+        # Create LOAD segment for each text group
+        for (group_idx, group) in enumerate(text_groups)
+            min_addr = minimum(r.base_address for r in group)
+            max_addr = maximum(r.base_address + r.size for r in group)
+            total_size = max_addr - min_addr
+            
+            # Calculate file offset - first group gets page-aligned offset, others get filled later
+            file_offset = if group_idx == 1
+                data_offset_calc = elf_header_size + ph_table_size
+                page_size = 0x1000
+                (data_offset_calc + page_size - 1) & ~(page_size - 1)
+            else
+                0  # Will be filled later
+            end
+            
+            push!(program_headers, ProgramHeader(
+                PT_LOAD,                    # type
+                PF_R | PF_X,               # flags (Read + Execute) 
+                file_offset,               # offset
+                min_addr,                  # vaddr
+                min_addr,                  # paddr
+                total_size,                # filesz
+                total_size,                # memsz
+                0x1000                     # align (4KB)
+            ))
+        end
+    end
+    
+    # Third LOAD segment: Read-only data and dynamic linking structures
+    # This includes GOT (writable but starts as RO), symbol tables, relocation tables
+    if !isempty(rodata_regions) || !isempty(data_regions) || !isempty(linker.memory_regions)
+        # Find all non-executable regions that need to be loaded
+        non_exec_regions = filter(linker.memory_regions) do r
+            (r.permissions & 0x1) == 0  # Not executable
+        end
+        
+        if !isempty(non_exec_regions)
+            # Find the actual end of executable code (not including extensions)
+            actual_text_end = !isempty(text_regions) ? maximum(r.base_address + r.size for r in text_regions) : UInt64(0)
+            
+            # Get all non-exec regions
+            if !isempty(non_exec_regions)
+                min_addr = minimum(r.base_address for r in non_exec_regions)
+                max_addr = maximum(r.base_address + r.size for r in non_exec_regions)
+                total_size = max_addr - min_addr
+                
+                # Determine permissions - RW if any region is writable
+                has_write = any(r -> (r.permissions & 0x2) != 0, non_exec_regions)
+                flags = has_write ? (PF_R | PF_W) : PF_R
+                
+                println("DEBUG: Creating data LOAD segment: 0x$(string(min_addr, base=16)) to 0x$(string(max_addr, base=16)), size=0x$(string(total_size, base=16)), flags=$(has_write ? "RW" : "R")")
+                
+                push!(program_headers, ProgramHeader(
+                    PT_LOAD,                    # type
+                    flags,                     # flags
+                    0,                         # offset (to be filled later)
+                    min_addr,                  # vaddr
+                    min_addr,                  # paddr
+                    total_size,                # filesz
+                    total_size,                # memsz
+                    0x1000                     # align (4KB)
+                ))
+            end
+        end
+    end
+    
+    # Create rodata segment (R) if we have read-only regions
+    # Skip if it would overlap with text or first LOAD segment
+    if !isempty(rodata_regions)
+        min_addr = minimum(r.base_address for r in rodata_regions)
+        max_addr = maximum(r.base_address + r.size for r in rodata_regions)
+        total_size = max_addr - min_addr
+        
+        # Only create rodata segment if it doesn't overlap with existing segments
+        overlaps = false
+        for ph in program_headers
+            if ph.type == PT_LOAD && min_addr < ph.vaddr + ph.memsz && max_addr > ph.vaddr
+                overlaps = true
+                break
+            end
+        end
+        
+        if !overlaps
+            push!(program_headers, ProgramHeader(
+                PT_LOAD,                    # type
+                PF_R,                      # flags (Read only)
+                0,                         # offset (to be filled)
+                min_addr,                  # vaddr
+                min_addr,                  # paddr
+                total_size,                # filesz
+                total_size,                # memsz
+                0x1000                     # align (4KB)
+            ))
+        end
+    end
+    
+    # Create data segment (R+W) if we have writable regions  
+    # Skip if it would overlap with existing segments
+    if !isempty(data_regions)
+        min_addr = minimum(r.base_address for r in data_regions)
+        max_addr = maximum(r.base_address + r.size for r in data_regions)
+        total_size = max_addr - min_addr
+        
+        # Only create data segment if it doesn't overlap with existing segments
+        overlaps = false
+        for ph in program_headers
+            if ph.type == PT_LOAD && min_addr < ph.vaddr + ph.memsz && max_addr > ph.vaddr
+                overlaps = true
+                break
+            end
+        end
+        
+        if !overlaps
+            push!(program_headers, ProgramHeader(
+                PT_LOAD,                    # type
+                PF_R | PF_W,               # flags (Read + Write)
+                0,                         # offset (to be filled)
+                min_addr,                  # vaddr
+                min_addr,                  # paddr
+                total_size,                # filesz
+                total_size,                # memsz
+                0x1000                     # align (4KB)
+            ))
+        end
     end
     
     # Add PT_DYNAMIC program header for dynamic section
@@ -303,14 +402,11 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
         
         # Update program header file offsets
         current_offset = data_offset
-        first_load = true
+        first_load = true 
         for (i, ph) in enumerate(program_headers)
             if ph.type == PT_LOAD
-                if first_load && ph.vaddr == 0x400000  # First LOAD segment starts at offset 0 (includes ELF headers)
-                    program_headers[i] = ProgramHeader(
-                        ph.type, ph.flags, 0, ph.vaddr, ph.paddr,
-                        ph.filesz, ph.memsz, ph.align
-                    )
+                if first_load && ph.offset == 0  # First LOAD segment should start at offset 0 (includes ELF headers)
+                    # This segment already has correct offset of 0, keep it as is
                     first_load = false
                 else  # Subsequent LOAD segments start after data
                     program_headers[i] = ProgramHeader(
@@ -399,22 +495,19 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
         
         # Write segment data by grouping memory regions
         for (segment_idx, ph) in enumerate(program_headers)
-            # Skip non-LOAD segments
-            if ph.type != PT_LOAD
-                continue
-            end
-            
-            # Find all memory regions that belong to this segment
-            segment_regions = filter(linker.memory_regions) do region
-                region.base_address >= ph.vaddr && 
-                region.base_address < ph.vaddr + ph.memsz
-            end
-            
-            # Sort regions by address
-            sort!(segment_regions, by=r -> r.base_address)
+            # Process LOAD segments
+            if ph.type == PT_LOAD
+                # Find all memory regions that belong to this segment
+                segment_regions = filter(linker.memory_regions) do region
+                    region.base_address >= ph.vaddr && 
+                    region.base_address < ph.vaddr + ph.memsz
+                end
+                
+                # Sort regions by address
+                sort!(segment_regions, by=r -> r.base_address)
             
             # For segments, calculate the correct file offset based on virtual address mapping
-            if ph.type == PT_LOAD && ph.vaddr == 0x400000  # First LOAD segment includes ELF headers
+            if ph.type == PT_LOAD && ph.offset == 0  # First LOAD segment includes ELF headers
                 # PRODUCTION FIX: Correct file offset calculation for first LOAD segment
                 # The first LOAD segment contains headers + code, but code must be placed at page boundaries
                 
@@ -500,6 +593,74 @@ function write_elf_executable(linker::DynamicLinker, output_filename::String; en
                         write(io, UInt8(0))
                     end
                 end
+            end
+            
+            # Process DYNAMIC segment separately
+            elseif ph.type == PT_DYNAMIC
+                # Find the dynamic section memory region
+                dynamic_region = findfirst(linker.memory_regions) do region
+                    region.base_address == ph.vaddr
+                end
+                
+                if dynamic_region !== nothing
+                    region = linker.memory_regions[dynamic_region]
+                    println("🔧 Writing DYNAMIC section at vaddr 0x$(string(region.base_address, base=16)) to file offset 0x$(string(ph.offset, base=16))")
+                    seek(io, ph.offset)
+                    write(io, region.data)
+                else
+                    @warn "Could not find dynamic section memory region at vaddr 0x$(string(ph.vaddr, base=16))"
+                end
+            end
+        end
+        
+        # Write critical regions that might not be in LOAD segments
+        # These include GOT, symbol tables, relocation tables, and string tables
+        # Write them at their virtual addresses (which work as file offsets for PIE base 0)
+        
+        # Find dynamic section vaddr to exclude it (already written)
+        dynamic_vaddr = UInt64(0)
+        for ph in program_headers
+            if ph.type == PT_DYNAMIC
+                dynamic_vaddr = ph.vaddr
+                break
+            end
+        end
+        
+        critical_regions = filter(linker.memory_regions) do region
+            # Check if region is GOT, symbol table, relocation table, or string table
+            # These typically have read-only (0x4) or read-write (0x6) permissions
+            # and are at addresses beyond the main code sections
+            perms = region.permissions
+            addr = region.base_address
+            # Write non-executable regions at higher addresses
+            (perms == 0x4 || perms == 0x6) && addr >= 0x1180 && region.base_address != dynamic_vaddr
+        end
+        
+        for region in critical_regions
+            # Calculate correct file offset based on LOAD segment mapping
+            # Find the LOAD segment that contains this region's virtual address
+            containing_load = nothing
+            for ph in program_headers
+                if ph.type == PT_LOAD && region.base_address >= ph.vaddr && region.base_address < ph.vaddr + ph.memsz
+                    containing_load = ph
+                    break
+                end
+            end
+            
+            if containing_load !== nothing
+                # Calculate file offset using the LOAD segment's mapping
+                # file_offset = ph.offset + (vaddr - ph.vaddr)
+                file_offset = containing_load.offset + (region.base_address - containing_load.vaddr)
+                println("🔧 Writing critical region at vaddr 0x$(string(region.base_address, base=16)) to file offset 0x$(string(file_offset, base=16)) ($(region.size) bytes, perms=0x$(string(region.permissions, base=16)))")
+                seek(io, file_offset)
+                write(io, region.data)
+            else
+                # No containing LOAD segment - this shouldn't happen, but fall back to vaddr = offset
+                file_offset = region.base_address
+                @warn "Critical region at vaddr 0x$(string(region.base_address, base=16)) not in any LOAD segment"
+                println("🔧 Writing orphan critical region at vaddr 0x$(string(region.base_address, base=16)) to file offset 0x$(string(file_offset, base=16)) ($(region.size) bytes, perms=0x$(string(region.permissions, base=16)))")
+                seek(io, file_offset)
+                write(io, region.data)
             end
         end
     end
