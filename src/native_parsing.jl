@@ -2,9 +2,27 @@
 # This replaces external tool dependencies (nm, objdump) with direct binary parsing
 # Uses unified ELF constants and structures from elf_format.jl
 #
-# Implementation Note: This module provides endianness-aware parsing (supporting both
-# little-endian and big-endian) while reusing canonical ELF data structures. It complements
-# elf_parser.jl which assumes little-endian format for performance.
+# = Architectural Design =
+#
+# This module provides endianness-aware parsing (supporting both little-endian and 
+# big-endian) while reusing canonical ELF data structures from elf_format.jl.
+#
+# Key principles:
+# 1. **Single Source of Truth**: All ELF constants/structures defined in elf_format.jl
+# 2. **Endianness Support**: Helper functions abstract byte-order conversion
+# 3. **No External Tools**: Pure Julia parsing without nm/objdump dependencies
+# 4. **Complementary Design**: Works alongside elf_parser.jl which optimizes for little-endian
+#
+# = Mathematical Model (Following Copilot Guidelines) =
+#
+# Non-algorithmic components (constants, structures, I/O) use Julia directly.
+# Algorithmic components (parsing, symbol extraction) follow mathematical specification
+# where it clarifies the transformation:
+#
+# ```math
+# extract_symbols: FilePath → Set(Symbol)
+# parse_header: BinaryData → ElfHeader ∪ {⊥}
+# ```
 
 """
     Archive magic constant for native parsing
