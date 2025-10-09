@@ -1,6 +1,10 @@
 # Native ELF and Archive parsing for library support
 # This replaces external tool dependencies (nm, objdump) with direct binary parsing
 # Uses unified ELF constants and structures from elf_format.jl
+#
+# Implementation Note: This module provides endianness-aware parsing (supporting both
+# little-endian and big-endian) while reusing canonical ELF data structures. It complements
+# elf_parser.jl which assumes little-endian format for performance.
 
 """
     Archive magic constant for native parsing
@@ -144,6 +148,29 @@ function parse_native_elf_header(file_path::String)
 end
 
 """
+    read_section_header_64(file::IO, little_endian::Bool) -> SectionHeader
+
+Helper function to read a 64-bit section header with endianness handling.
+"""
+function read_section_header_64(file::IO, little_endian::Bool)
+    # Use appropriate byte order conversion based on endianness
+    convert_fn = little_endian ? ltoh : ntoh
+    
+    name = convert_fn(read(file, UInt32))
+    type = convert_fn(read(file, UInt32))
+    flags = convert_fn(read(file, UInt64))
+    addr = convert_fn(read(file, UInt64))
+    offset = convert_fn(read(file, UInt64))
+    size = convert_fn(read(file, UInt64))
+    link = convert_fn(read(file, UInt32))
+    info = convert_fn(read(file, UInt32))
+    addralign = convert_fn(read(file, UInt64))
+    entsize = convert_fn(read(file, UInt64))
+    
+    return SectionHeader(name, type, flags, addr, offset, size, link, info, addralign, entsize)
+end
+
+"""
     extract_elf_symbols_native(file_path::String) -> Set{String}
 
 Extract symbols from ELF file using native parsing (no external tools).
@@ -171,31 +198,7 @@ function extract_elf_symbols_native(file_path::String)
             
             for i in 1:header.shnum
                 if is_64bit
-                    if little_endian
-                        name = ltoh(read(file, UInt32))
-                        type = ltoh(read(file, UInt32))
-                        flags = ltoh(read(file, UInt64))
-                        addr = ltoh(read(file, UInt64))
-                        offset = ltoh(read(file, UInt64))
-                        size = ltoh(read(file, UInt64))
-                        link = ltoh(read(file, UInt32))
-                        info = ltoh(read(file, UInt32))
-                        addralign = ltoh(read(file, UInt64))
-                        entsize = ltoh(read(file, UInt64))
-                    else
-                        name = ntoh(read(file, UInt32))
-                        type = ntoh(read(file, UInt32))
-                        flags = ntoh(read(file, UInt64))
-                        addr = ntoh(read(file, UInt64))
-                        offset = ntoh(read(file, UInt64))
-                        size = ntoh(read(file, UInt64))
-                        link = ntoh(read(file, UInt32))
-                        info = ntoh(read(file, UInt32))
-                        addralign = ntoh(read(file, UInt64))
-                        entsize = ntoh(read(file, UInt64))
-                    end
-                    
-                    push!(section_headers, SectionHeader(name, type, flags, addr, offset, size, link, info, addralign, entsize))
+                    push!(section_headers, read_section_header_64(file, little_endian))
                 else
                     # 32-bit ELF handling would go here
                     # For now, focus on 64-bit
@@ -247,6 +250,24 @@ function extract_elf_symbols_native(file_path::String)
 end
 
 """
+    read_symbol_entry_64(file::IO, little_endian::Bool) -> SymbolTableEntry
+
+Helper function to read a 64-bit symbol table entry with endianness handling.
+"""
+function read_symbol_entry_64(file::IO, little_endian::Bool)
+    convert_fn = little_endian ? ltoh : ntoh
+    
+    name = convert_fn(read(file, UInt32))
+    info = read(file, UInt8)
+    other = read(file, UInt8)
+    shndx = convert_fn(read(file, UInt16))
+    value = convert_fn(read(file, UInt64))
+    size = convert_fn(read(file, UInt64))
+    
+    return SymbolTableEntry(name, info, other, shndx, value, size)
+end
+
+"""
     parse_symbol_table(file, symtab_section, strtab_section, little_endian, is_64bit) -> Set{String}
 
 Parse symbol table section and extract symbol names.
@@ -268,42 +289,28 @@ function parse_symbol_table(file, symtab_section, strtab_section, little_endian,
     
     for i in 1:num_symbols
         if is_64bit
-            if little_endian
-                name_offset = ltoh(read(file, UInt32))
-                info = read(file, UInt8)
-                other = read(file, UInt8)
-                shndx = ltoh(read(file, UInt16))
-                value = ltoh(read(file, UInt64))
-                size = ltoh(read(file, UInt64))
-            else
-                name_offset = ntoh(read(file, UInt32))
-                info = read(file, UInt8)
-                other = read(file, UInt8)
-                shndx = ntoh(read(file, UInt16))
-                value = ntoh(read(file, UInt64))
-                size = ntoh(read(file, UInt64))
-            end
+            symbol_entry = read_symbol_entry_64(file, little_endian)
             
             # Extract symbol name from string table
-            if name_offset > 0 && name_offset < length(string_table)
+            if symbol_entry.name > 0 && symbol_entry.name < length(string_table)
                 # Find null terminator
-                name_end = findfirst(x -> x == 0, string_table[name_offset+1:end])
+                name_end = findfirst(x -> x == 0, string_table[symbol_entry.name+1:end])
                 if name_end !== nothing && name_end > 1
                     try
                         # Extract the byte range for the symbol name
-                        symbol_bytes = string_table[name_offset+1:name_offset+name_end-1]
+                        symbol_bytes = string_table[symbol_entry.name+1:symbol_entry.name+name_end-1]
                         
                         # Validate that all bytes are valid ASCII/UTF-8 
                         if all(b -> 0x20 <= b <= 0x7E || b == 0x09, symbol_bytes)  # Printable ASCII + tab
                             symbol_name = String(copy(symbol_bytes))
                             
                             # Filter symbols (only global/weak defined symbols)
-                            binding = info >> 4
-                            symbol_type = info & 0xf
+                            binding = symbol_entry.info >> 4
+                            symbol_type = symbol_entry.info & 0xf
                             
                             # Include printf and other libc symbols - remove the underscore filter
                             if (binding == STB_GLOBAL || binding == STB_WEAK) && 
-                               shndx != 0 && !isempty(symbol_name) && length(symbol_name) > 0
+                               symbol_entry.shndx != 0 && !isempty(symbol_name) && length(symbol_name) > 0
                                 push!(symbols, symbol_name)
                             end
                         end
