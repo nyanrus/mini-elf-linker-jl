@@ -1,36 +1,14 @@
 # Native ELF and Archive parsing for library support
 # This replaces external tool dependencies (nm, objdump) with direct binary parsing
+# Uses unified ELF constants and structures from elf_format.jl
 
 """
-    ELF Magic bytes and constants for native parsing
+    Archive magic constant for native parsing
 """
-const NATIVE_ELF_MAGIC = UInt8[0x7f, 0x45, 0x4c, 0x46]  # "\x7fELF"
-const NATIVE_AR_MAGIC = b"!<arch>\n"  # Archive magic
+const AR_MAGIC = b"!<arch>\n"  # Archive magic
 
-const NATIVE_ELF_CLASS_32 = 0x01
-const NATIVE_ELF_CLASS_64 = 0x02
-const NATIVE_ELF_DATA_LSB = 0x01  # Little endian
-const NATIVE_ELF_DATA_MSB = 0x02  # Big endian
-
-const NATIVE_ET_NONE = 0x0000    # No file type
-const NATIVE_ET_REL = 0x0001     # Relocatable file
-const NATIVE_ET_EXEC = 0x0002    # Executable file  
-const NATIVE_ET_DYN = 0x0003     # Shared object file
-const NATIVE_ET_CORE = 0x0004    # Core file
-
-const NATIVE_SHT_NULL = 0x00000000
-const NATIVE_SHT_PROGBITS = 0x00000001
-const NATIVE_SHT_SYMTAB = 0x00000002
-const NATIVE_SHT_STRTAB = 0x00000003
-const NATIVE_SHT_DYNSYM = 0x0000000b
-
-const NATIVE_STB_LOCAL = 0
-const NATIVE_STB_GLOBAL = 1
-const NATIVE_STB_WEAK = 2
-
-const NATIVE_STT_NOTYPE = 0
-const NATIVE_STT_OBJECT = 1
-const NATIVE_STT_FUNC = 2
+# Helper constants for cleaner code - map to canonical ELF format constants
+const ELF_MAGIC_BYTES = UInt8[0x7f, 0x45, 0x4c, 0x46]  # "\x7fELF" as bytes for comparison
 
 """
     FileType
@@ -54,9 +32,9 @@ function detect_file_type_by_magic(file_path::String)
             # Read first 8 bytes to check magic
             magic_bytes = read(file, 8)
             
-            if length(magic_bytes) >= 4 && magic_bytes[1:4] == NATIVE_ELF_MAGIC
+            if length(magic_bytes) >= 4 && magic_bytes[1:4] == ELF_MAGIC_BYTES
                 return ELF_FILE
-            elseif length(magic_bytes) >= 8 && magic_bytes == NATIVE_AR_MAGIC
+            elseif length(magic_bytes) >= 8 && magic_bytes == AR_MAGIC
                 return AR_FILE
             else
                 # Check if it's a linker script (text file)
@@ -82,66 +60,10 @@ function detect_file_type_by_magic(file_path::String)
 end
 
 """
-    NativeElfHeader
-
-Struct representing ELF header for native parsing.
-"""
-struct NativeElfHeader
-    class::UInt8          # 32 or 64 bit
-    data::UInt8           # Endianness
-    version::UInt8        # ELF version
-    osabi::UInt8          # OS/ABI
-    abiversion::UInt8     # ABI version
-    type::UInt16          # Object file type
-    machine::UInt16       # Target architecture
-    entry::UInt64         # Entry point address
-    phoff::UInt64         # Program header offset
-    shoff::UInt64         # Section header offset
-    flags::UInt32         # Processor flags
-    ehsize::UInt16        # ELF header size
-    phentsize::UInt16     # Program header entry size
-    phnum::UInt16         # Number of program headers
-    shentsize::UInt16     # Section header entry size
-    shnum::UInt16         # Number of section headers
-    shstrndx::UInt16      # Section header string table index
-end
-
-"""
-    NativeSectionHeader64
-
-Struct representing 64-bit ELF section header for native parsing.
-"""
-struct NativeSectionHeader64
-    name::UInt32          # Section name offset
-    type::UInt32          # Section type
-    flags::UInt64         # Section flags
-    addr::UInt64          # Section virtual address
-    offset::UInt64        # Section file offset
-    size::UInt64          # Section size
-    link::UInt32          # Link to other section
-    info::UInt32          # Additional section information
-    addralign::UInt64     # Section alignment
-    entsize::UInt64       # Entry size if section has table
-end
-
-"""
-    NativeSymbol64
-
-Struct representing 64-bit ELF symbol table entry for native parsing.
-"""
-struct NativeSymbol64
-    name::UInt32          # Symbol name offset
-    info::UInt8           # Symbol type and binding
-    other::UInt8          # Symbol visibility
-    shndx::UInt16         # Section index
-    value::UInt64         # Symbol value
-    size::UInt64          # Symbol size
-end
-
-"""
-    parse_native_elf_header(file_path::String) -> Union{NativeElfHeader, Nothing}
+    parse_native_elf_header(file_path::String) -> Union{ElfHeader, Nothing}
 
 Parse ELF header from file using native binary reading.
+Returns canonical ElfHeader structure from elf_format.jl.
 """
 function parse_native_elf_header(file_path::String)
     if detect_file_type_by_magic(file_path) != ELF_FILE
@@ -150,8 +72,8 @@ function parse_native_elf_header(file_path::String)
     
     try
         open(file_path, "r") do file
-            # Skip magic (already verified)
-            seek(file, 4)
+            # Read and validate magic
+            magic = ntuple(i -> read(file, UInt8), 4)
             
             class = read(file, UInt8)
             data = read(file, UInt8)
@@ -160,17 +82,17 @@ function parse_native_elf_header(file_path::String)
             abiversion = read(file, UInt8)
             
             # Skip padding
-            seek(file, 16)
+            pad = ntuple(i -> read(file, UInt8), 7)
             
             # Read rest of header based on endianness
-            little_endian = (data == NATIVE_ELF_DATA_LSB)
+            little_endian = (data == ELFDATA2LSB)
             
             if little_endian
                 type = ltoh(read(file, UInt16))
                 machine = ltoh(read(file, UInt16))
-                version32 = ltoh(read(file, UInt32))
+                version2 = ltoh(read(file, UInt32))
                 
-                if class == NATIVE_ELF_CLASS_64
+                if class == ELFCLASS64
                     entry = ltoh(read(file, UInt64))
                     phoff = ltoh(read(file, UInt64))
                     shoff = ltoh(read(file, UInt64))
@@ -190,9 +112,9 @@ function parse_native_elf_header(file_path::String)
             else
                 type = ntoh(read(file, UInt16))
                 machine = ntoh(read(file, UInt16))
-                version32 = ntoh(read(file, UInt32))
+                version2 = ntoh(read(file, UInt32))
                 
-                if class == NATIVE_ELF_CLASS_64
+                if class == ELFCLASS64
                     entry = ntoh(read(file, UInt64))
                     phoff = ntoh(read(file, UInt64))
                     shoff = ntoh(read(file, UInt64))
@@ -211,9 +133,9 @@ function parse_native_elf_header(file_path::String)
                 shstrndx = ntoh(read(file, UInt16))
             end
             
-            return NativeElfHeader(class, data, version, osabi, abiversion, type, machine,
-                           entry, phoff, shoff, flags, ehsize, phentsize, phnum,
-                           shentsize, shnum, shstrndx)
+            return ElfHeader(magic, class, data, version, osabi, abiversion, pad,
+                           type, machine, version2, entry, phoff, shoff, flags,
+                           ehsize, phentsize, phnum, shentsize, shnum, shstrndx)
         end
     catch e
         println("Warning: Failed to parse ELF header from $file_path: $e")
@@ -236,8 +158,8 @@ function extract_elf_symbols_native(file_path::String)
     
     try
         open(file_path, "r") do file
-            little_endian = (header.data == NATIVE_ELF_DATA_LSB)
-            is_64bit = (header.class == NATIVE_ELF_CLASS_64)
+            little_endian = (header.data == ELFDATA2LSB)
+            is_64bit = (header.class == ELFCLASS64)
             
             # Read section headers
             if header.shoff == 0 || header.shnum == 0
@@ -273,7 +195,7 @@ function extract_elf_symbols_native(file_path::String)
                         entsize = ntoh(read(file, UInt64))
                     end
                     
-                    push!(section_headers, NativeSectionHeader64(name, type, flags, addr, offset, size, link, info, addralign, entsize))
+                    push!(section_headers, SectionHeader(name, type, flags, addr, offset, size, link, info, addralign, entsize))
                 else
                     # 32-bit ELF handling would go here
                     # For now, focus on 64-bit
@@ -283,7 +205,7 @@ function extract_elf_symbols_native(file_path::String)
             
             # Find symbol tables and string tables
             for (i, section) in enumerate(section_headers)
-                if section.type == NATIVE_SHT_SYMTAB || section.type == NATIVE_SHT_DYNSYM
+                if section.type == SHT_SYMTAB || section.type == SHT_DYNSYM
                     # Found symbol table, get corresponding string table
                     strtab_section = nothing
                     
@@ -291,17 +213,17 @@ function extract_elf_symbols_native(file_path::String)
                     if section.link > 0 && section.link <= length(section_headers)
                         candidate = section_headers[section.link]
                         # Check if it's actually a string table and not pointing to itself
-                        if candidate.type == NATIVE_SHT_STRTAB && section.link != i
+                        if candidate.type == SHT_STRTAB && section.link != i
                             strtab_section = candidate
                         end
                     end
                     
                     # If link field doesn't work (common with dynamic symbols), find the largest string table
-                    if strtab_section === nothing && section.type == NATIVE_SHT_DYNSYM
+                    if strtab_section === nothing && section.type == SHT_DYNSYM
                         largest_strtab = nothing
                         largest_size = 0
                         for candidate in section_headers
-                            if candidate.type == NATIVE_SHT_STRTAB && candidate.size > largest_size
+                            if candidate.type == SHT_STRTAB && candidate.size > largest_size
                                 largest_strtab = candidate
                                 largest_size = candidate.size
                             end
@@ -380,7 +302,7 @@ function parse_symbol_table(file, symtab_section, strtab_section, little_endian,
                             symbol_type = info & 0xf
                             
                             # Include printf and other libc symbols - remove the underscore filter
-                            if (binding == NATIVE_STB_GLOBAL || binding == NATIVE_STB_WEAK) && 
+                            if (binding == STB_GLOBAL || binding == STB_WEAK) && 
                                shndx != 0 && !isempty(symbol_name) && length(symbol_name) > 0
                                 push!(symbols, symbol_name)
                             end
@@ -445,7 +367,7 @@ function extract_archive_symbols_native(file_path::String)
                     magic = read(file, 4)
                     seek(file, member_start)  # Reset position
                     
-                    if magic == NATIVE_ELF_MAGIC
+                    if magic == ELF_MAGIC_BYTES
                         # Create temporary file for the ELF object
                         temp_file = tempname() * ".o"
                         try
